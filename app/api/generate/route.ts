@@ -1,7 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
-export const maxDuration = 60;
+export const runtime = 'nodejs';
+export const maxDuration = 120;
 
 function getSaasUrl(saasInfo: any, specificUrl: string, defaultPath: string) {
   if (saasInfo[specificUrl]) return saasInfo[specificUrl];
@@ -21,7 +22,6 @@ export async function POST(req: Request) {
       sceneImage, 
       modelImage, 
       aspectRatio, 
-      imageSize,
       saasInfo
     } = await req.json();
 
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
 
     let response;
     try {
-        const timeoutMsg = "AI 生成超时(45s): 模型处理耗时过长，请尝试降低参数或再次重试。";
+        const timeoutMsg = "AI 生成超时(120s): 模型处理耗时过长，请尝试降低参数或再次重试。";
         const targetModel = genModel || "gemini-3.1-flash-image-preview";
         response = await Promise.race([
           ai.models.generateContent({
@@ -89,13 +89,12 @@ export async function POST(req: Request) {
             contents: { parts },
             config: {
               imageConfig: {
-                aspectRatio,
-                ...(imageSize ? { imageSize } : {}),
+                aspectRatio
               }
             }
           }),
           new Promise<never>((_, reject) => {
-             setTimeout(() => reject(new Error(timeoutMsg)), 45000);
+             setTimeout(() => reject(new Error(timeoutMsg)), 120000);
           })
         ]);
     } catch(err: any) {

@@ -1,7 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { NextResponse } from "next/server";
 
-export const maxDuration = 60;
+export const runtime = 'nodejs';
+export const maxDuration = 120;
 
 export async function POST(req: Request) {
   try {
@@ -28,7 +29,7 @@ export async function POST(req: Request) {
       };
     });
 
-    const timeoutMsg = "AI 分析超时(45s)，请尝试重新提取";
+    const timeoutMsg = "AI 分析超时(120s)，请尝试重新提取";
     let response;
     try {
         response = await Promise.race([
@@ -52,7 +53,7 @@ export async function POST(req: Request) {
             }
           }),
           new Promise<never>((_, reject) => {
-             setTimeout(() => reject(new Error(timeoutMsg)), 45000);
+             setTimeout(() => reject(new Error(timeoutMsg)), 120000);
           })
         ]);
     } catch (err: any) {

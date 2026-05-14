@@ -180,7 +180,15 @@ export default function Home() {
         body: JSON.stringify({ images }),
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get("content-type");
+      let data: any = {};
+      if (contentType && contentType.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        throw new Error(`请求超时或服务端异常 (${res.status}): 请重试`);
+      }
+
       if (!res.ok) {
         throw new Error(data.error || "分析失败");
       }
@@ -262,7 +270,15 @@ ${modelImage ? "5. 【模特融入】：必须 100% 还原【模特参考图】�
                 }),
               });
               
-              const data = await res.json();
+              const contentType = res.headers.get("content-type");
+              let data: any = {};
+              if (contentType && contentType.includes("application/json")) {
+                data = await res.json();
+              } else {
+                const text = await res.text();
+                throw new Error(`生成超时或服务端异常 (${res.status}): 当前部署环境限制了最大算力时长，请尝试降低参数或仅生成一张。`);
+              }
+
               if (!res.ok) throw new Error(data.error || "生成失败");
               
               return data.image?.url || data.image || data.url;

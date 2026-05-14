@@ -41,7 +41,8 @@ export async function POST(req: Request) {
         const verifyRes = await fetch(verifyUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId, toolId })
+          body: JSON.stringify({ userId, toolId }),
+          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
         });
         const verifyDataText = await verifyRes.text();
         let verifyData: any = {};
@@ -80,19 +81,25 @@ export async function POST(req: Request) {
 
     let response;
     try {
+        const timeoutMsg = "AI 生成超时(45s): 模型处理耗时过长，请尝试降低参数或再次重试。";
         const targetModel = genModel || "gemini-3.1-flash-image-preview";
-        response = await ai.models.generateContent({
-          model: targetModel,
-          contents: { parts },
-          config: {
-            imageConfig: {
-              aspectRatio,
-              ...(imageSize ? { imageSize } : {}),
+        response = await Promise.race([
+          ai.models.generateContent({
+            model: targetModel,
+            contents: { parts },
+            config: {
+              imageConfig: {
+                aspectRatio,
+                ...(imageSize ? { imageSize } : {}),
+              }
             }
-          }
-        });
+          }),
+          new Promise<never>((_, reject) => {
+             setTimeout(() => reject(new Error(timeoutMsg)), 45000);
+          })
+        ]);
     } catch(err: any) {
-        return NextResponse.json({ error: `AI 生成图片失败: ${err.message}` }, { status: 500 });
+        return NextResponse.json({ error: `AI 生成失败: ${err.message}` }, { status: 500 });
     }
 
     if (!response.candidates?.[0]?.content?.parts) {
@@ -123,7 +130,8 @@ export async function POST(req: Request) {
         const consumeRes = await fetch(consumeUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId, toolId })
+          body: JSON.stringify({ userId, toolId }),
+          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
         });
         const consumeText = await consumeRes.text();
         let consume: any = {};
@@ -144,7 +152,8 @@ export async function POST(req: Request) {
             mimeType: generatedMimeType,
             fileName: 'result.png',
             fileSize: finalImageBuffer.byteLength
-          })
+          }),
+          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
         });
         const tokenText = await tokenRes.text();
         let token: any = {};
@@ -157,7 +166,8 @@ export async function POST(req: Request) {
         const uploadRes = await fetch(token.uploadUrl, {
           method: token.method || 'PUT',
           headers: token.headers,
-          body: finalImageBuffer
+          body: finalImageBuffer,
+          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(30000) : undefined
         });
         if (!uploadRes.ok) throw new Error(`OSS 上传失败: ${uploadRes.status}`);
 
@@ -172,7 +182,8 @@ export async function POST(req: Request) {
             source: 'result',
             objectKey: token.objectKey,
             fileSize: finalImageBuffer.byteLength
-          })
+          }),
+          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
         });
         const commitText = await commitRes.text();
         let commit: any = {};

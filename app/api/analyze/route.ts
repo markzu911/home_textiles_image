@@ -28,25 +28,36 @@ export async function POST(req: Request) {
       };
     });
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: { parts: [{ text: prompt }, ...parts] },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            material: { type: Type.STRING, description: "材质" },
-            color: { type: Type.STRING, description: "颜色" },
-            pattern: { type: Type.STRING, description: "图案" },
-            style: { type: Type.STRING, description: "整体风格" },
-            details: { type: Type.STRING, description: "细节设计(花边、刺绣等)" },
-            sellingPoint: { type: Type.STRING, description: "核心卖点" }
-          },
-          required: ["material", "color", "pattern", "style", "details", "sellingPoint"]
-        }
-      }
-    });
+    const timeoutMsg = "AI 分析超时(45s)，请尝试重新提取";
+    let response;
+    try {
+        response = await Promise.race([
+          ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: { parts: [{ text: prompt }, ...parts] },
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  material: { type: Type.STRING, description: "材质" },
+                  color: { type: Type.STRING, description: "颜色" },
+                  pattern: { type: Type.STRING, description: "图案" },
+                  style: { type: Type.STRING, description: "整体风格" },
+                  details: { type: Type.STRING, description: "细节设计(花边、刺绣等)" },
+                  sellingPoint: { type: Type.STRING, description: "核心卖点" }
+                },
+                required: ["material", "color", "pattern", "style", "details", "sellingPoint"]
+              }
+            }
+          }),
+          new Promise<never>((_, reject) => {
+             setTimeout(() => reject(new Error(timeoutMsg)), 45000);
+          })
+        ]);
+    } catch (err: any) {
+        return NextResponse.json({ error: `AI 分析失败: ${err.message}` }, { status: 500 });
+    }
 
     let text = response.text;
     if (!text) throw new Error("No response text");

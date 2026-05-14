@@ -247,53 +247,57 @@ ${modelImage ? "5. 【模特融入】：必须 100% 还原【模特参考图】�
       };
 
       const imageSize = quality === "uhd" ? "4K" : quality === "hd" ? "2K" : "1K";
-      const allGeneratePromises = [];
+      const generatedList: string[] = [];
+      let partialError = null;
 
-      for (const type of imageTypes) {
-        const prompt = getPrompt(type);
-        
-        for (let i = 0; i < generationCount; i++) {
-          allGeneratePromises.push(
-            (async () => {
-              const res = await fetch("/api/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  model: genModel,
-                  prompt,
-                  images,
-                  sceneImage,
-                  modelImage,
-                  aspectRatio,
-                  imageSize,
-                  saasInfo
-                }),
-              });
-              
-              const contentType = res.headers.get("content-type");
-              let data: any = {};
-              if (contentType && contentType.includes("application/json")) {
-                data = await res.json();
-              } else {
-                const text = await res.text();
-                throw new Error(`生成超时或服务端异常 (${res.status}): 当前部署环境限制了最大算力时长，请尝试降低参数或仅生成一张。`);
-              }
+      try {
+        for (const type of imageTypes) {
+          const prompt = getPrompt(type);
+          
+          for (let i = 0; i < generationCount; i++) {
+            const res = await fetch("/api/generate", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: genModel,
+                prompt,
+                images,
+                sceneImage,
+                modelImage,
+                aspectRatio,
+                imageSize,
+                saasInfo
+              }),
+            });
+            
+            const contentType = res.headers.get("content-type");
+            let data: any = {};
+            if (contentType && contentType.includes("application/json")) {
+              data = await res.json();
+            } else {
+              const text = await res.text();
+              throw new Error(`生成超时或服务端异常 (${res.status}): 请求被网关拦截`);
+            }
 
-              if (!res.ok) throw new Error(data.error || "生成失败");
-              
-              return data.image?.url || data.image || data.url;
-            })()
-          );
+            if (!res.ok) throw new Error(data.error || "生成失败");
+            
+            const url = data.image?.url || data.image || data.url;
+            if (url) generatedList.push(url);
+          }
         }
+      } catch (e: any) {
+        partialError = e;
       }
 
-      const newImageUrls = await Promise.all(allGeneratePromises);
-
-      if (newImageUrls.length > 0) {
-        setGeneratedImages((prev) => [...newImageUrls, ...prev]);
+      if (generatedList.length > 0) {
+        setGeneratedImages((prev) => [...generatedList, ...prev]);
         setSelectedImageIndex(0);
         setStep("RESULT");
+        if (partialError) {
+          setError("部分生成失败: " + (partialError.message || "未知错误") + "，已为您保留成功的图片");
+        }
       } else {
+        if (partialError) throw partialError;
         throw new Error("生成失败，未返回图片数据");
       }
     } catch (err: any) {

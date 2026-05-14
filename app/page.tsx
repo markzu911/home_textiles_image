@@ -253,64 +253,41 @@ ${modelImage ? "5. 【模特融入】：必须 100% 还原【模特参考图】�
           const prompt = getPrompt(type);
           
           for (let i = 0; i < generationCount; i++) {
-            const res = await fetch("/api/generate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                model: genModel,
-                prompt,
-                images,
-                sceneImage,
-                modelImage,
-                aspectRatio,
-                saasInfo
-              }),
-            });
-            
-            const contentType = res.headers.get("content-type");
-            let data: any = {};
-            if (contentType && contentType.includes("application/json")) {
-              data = await res.json();
-            } else {
-              const text = await res.text();
-              throw new Error(`生成超时或服务端异常 (${res.status}): 请求被网关拦截或超时`);
-            }
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 120000);
 
-            if (!res.ok) throw new Error(data.error || "生成失败");
-            
-            let url: string | undefined;
-
-            if (data.taskId) {
-              // Task Mode (polling)
-              url = await new Promise<string>((resolve, reject) => {
-                const poll = async () => {
-                  try {
-                    const taskRes = await fetch(`/api/tasks/${data.taskId}`);
-                    const taskData = await taskRes.json();
-                    
-                    if (taskData.status === 'completed') {
-                      resolve(taskData.image?.url || taskData.image);
-                    } else if (taskData.status === 'failed') {
-                      reject(new Error(taskData.error || "任务执行失败"));
-                    } else if (taskData.status === 'processing') {
-                      setTimeout(poll, 3000); // Poll every 3 seconds
-                    } else {
-                      reject(new Error("未知任务状态: " + taskData.status));
-                    }
-                  } catch (pollErr: any) {
-                    // Retry polling blindly to avoid transient disconnects ruining the task
-                    console.error("Polling error:", pollErr);
-                    setTimeout(poll, 3000);
-                  }
-                };
-                poll();
+            try {
+              const res = await fetch("/api/generate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: genModel,
+                  prompt,
+                  images,
+                  sceneImage,
+                  modelImage,
+                  aspectRatio,
+                  saasInfo
+                }),
+                signal: controller.signal
               });
-            } else {
-              // Legacy Mode
-              url = data.image?.url || data.image || data.url;
-            }
+              
+              const contentType = res.headers.get("content-type");
+              let data: any = {};
+              if (contentType && contentType.includes("application/json")) {
+                data = await res.json();
+              } else {
+                const text = await res.text();
+                throw new Error(`生成超时或服务端异常 (${res.status}): 请求被网关拦截`);
+              }
 
-            if (url) generatedList.push(url);
+              if (!res.ok) throw new Error(data.error || "生成失败");
+              
+              const url = data.image?.url || data.image || data.url;
+              if (url) generatedList.push(url);
+            } finally {
+              clearTimeout(timeout);
+            }
           }
         }
       } catch (e: any) {

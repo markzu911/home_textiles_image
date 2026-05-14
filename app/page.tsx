@@ -30,13 +30,16 @@ declare global {
 type Step = "UPLOAD" | "ANALYZING" | "EDIT" | "GENERATING" | "RESULT";
 
 interface SaasInfo {
-  userId?: string;
-  toolId?: string;
+  userId?: string | null;
+  toolId?: string | null;
   context?: string;
   prompt?: string[];
+  apiBaseUrl?: string;
+  launchUrl?: string;
   verifyUrl?: string;
   consumeUrl?: string;
-  callbackUrl?: string;
+  uploadTokenUrl?: string;
+  uploadCommitUrl?: string;
 }
 
 interface AnalysisResult {
@@ -76,9 +79,25 @@ export default function Home() {
   const modelInputRef = useRef<HTMLInputElement>(null);
 
   require("react").useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlUserId = params.get('userId');
+    const urlToolId = params.get('toolId');
+    if (urlUserId && urlToolId) {
+      setSaasInfo(prev => ({...prev, userId: urlUserId, toolId: urlToolId}));
+    }
+
     const handleMessage = (event: MessageEvent) => {
       if (event.data && event.data.type === "SAAS_INIT") {
-        const { userId, toolId, verifyUrl, consumeUrl, callbackUrl } = event.data;
+        const { 
+          userId, 
+          toolId, 
+          launchUrl, 
+          verifyUrl, 
+          consumeUrl, 
+          uploadTokenUrl, 
+          uploadCommitUrl,
+          apiBaseUrl
+        } = event.data;
         let { context, prompt } = event.data;
         
         // Filter out "null" or "undefined" as required by spec
@@ -94,9 +113,12 @@ export default function Home() {
           toolId,
           context,
           prompt: validPrompt,
+          launchUrl,
           verifyUrl,
           consumeUrl,
-          callbackUrl,
+          uploadTokenUrl,
+          uploadCommitUrl,
+          apiBaseUrl
         });
       }
     };

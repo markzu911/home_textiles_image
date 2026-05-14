@@ -292,6 +292,51 @@ SaaS 在 `commit` 中会做这些校验：
 
 这些接口必须由工具后端完成 AI 生成、图片处理、扣费和 SaaS 保存。不要让浏览器拿到大图后再把大图 POST 到工具的 `/api/save`。
 
+AI 模型调用必须放在工具后端。前端可以调用工具自己的后端接口，例如：
+
+```js
+const res = await fetch('/api/gemini', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    model: 'gemini-2.5-flash',
+    payload
+  })
+});
+```
+
+但前端请求体里不要传 `GEMINI_API_KEY`。工具后端接口必须从 `.env` 或部署平台环境变量读取 `GEMINI_API_KEY`：
+
+```js
+export async function POST(request) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return Response.json(
+      { success: false, error: '缺少 GEMINI_API_KEY' },
+      { status: 500 }
+    );
+  }
+
+  const { model, payload } = await request.json();
+
+  // 在这里由工具后端携带 apiKey 调用 Gemini/AI 服务。
+  const result = await callGemini({
+    apiKey,
+    model,
+    payload
+  });
+
+  return Response.json({ success: true, data: result });
+}
+```
+
+注意：
+
+- `GEMINI_API_KEY` 只能放在工具后端运行环境的 `.env` 或部署平台环境变量里。
+- 不要使用 `NEXT_PUBLIC_GEMINI_API_KEY` 这类会暴露到浏览器的变量。
+- 不要让浏览器直接请求 Gemini 官方接口。
+- 不要把 `GEMINI_API_KEY` 写进前端源码、localStorage、URL 参数或请求 body。
+
 正确结构：
 
 ```txt
@@ -553,11 +598,13 @@ window.addEventListener('message', (event) => {
 
 1. 不要把用户原图/参考图上传到 SaaS OSS。
 2. 不要把 OSS 永久 AK/SK 放进工具项目。
-3. 结果图保存必须由工具后端完成，不要依赖浏览器在页面关闭前完成保存。
-4. 结果图保存只使用 `/api/upload/direct-token`、OSS `PUT`、`/api/upload/commit`。
-5. 不要让工具自己生成 `recordId` 或让 SaaS 直接信任工具传回的 URL 入库。
-6. 不要在 AI 生成失败或图片处理失败时调用 `/api/tool/consume`。
-7. 不要同一次生成既直接调用 `/api/tool/consume`，又发 `SAAS_CONSUME` 消息，否则可能重复扣费。
-8. 不要让前端把大图 POST 到工具的 `/api/save`。
-9. 不要跳过 `sharp().composite()` 前的尺寸检查。
-10. 不要让同步生成接口无限等待。
+3. 不要把 `GEMINI_API_KEY` 放进前端源码、`NEXT_PUBLIC_*` 环境变量、URL 参数或请求 body。
+4. 不要让浏览器直接请求 Gemini/AI 官方接口，必须由工具后端调用。
+5. 结果图保存必须由工具后端完成，不要依赖浏览器在页面关闭前完成保存。
+6. 结果图保存只使用 `/api/upload/direct-token`、OSS `PUT`、`/api/upload/commit`。
+7. 不要让工具自己生成 `recordId` 或让 SaaS 直接信任工具传回的 URL 入库。
+8. 不要在 AI 生成失败或图片处理失败时调用 `/api/tool/consume`。
+9. 不要同一次生成既直接调用 `/api/tool/consume`，又发 `SAAS_CONSUME` 消息，否则可能重复扣费。
+10. 不要让前端把大图 POST 到工具的 `/api/save`。
+11. 不要跳过 `sharp().composite()` 前的尺寸检查。
+12. 不要让同步生成接口无限等待。

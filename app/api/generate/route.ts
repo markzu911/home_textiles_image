@@ -3,6 +3,15 @@ import { NextResponse } from "next/server";
 
 export const maxDuration = 60;
 
+function getSaasUrl(saasInfo: any, specificUrl: string, defaultPath: string) {
+  if (saasInfo[specificUrl]) return saasInfo[specificUrl];
+  let origin = saasInfo.apiBaseUrl || "https://aibigtree.com";
+  if (!saasInfo.apiBaseUrl && saasInfo.consumeUrl) {
+      try { origin = new URL(saasInfo.consumeUrl).origin; } catch(e){}
+  }
+  return origin.replace(/\/$/, '') + defaultPath;
+}
+
 export async function POST(req: Request) {
   try {
     const { 
@@ -16,27 +25,35 @@ export async function POST(req: Request) {
       saasInfo
     } = await req.json();
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return NextResponse.json({ error: "Gemini API Key missing (server)" }, { status: 500 });
+      return NextResponse.json({ error: "缺少 GEMINI_API_KEY (Server)" }, { status: 500 });
     }
 
+    const { userId, toolId } = saasInfo || {};
+    const shouldSaveToSaas = !!(userId && toolId);
+
     // 1. Verify integral
-    if (saasInfo?.verifyUrl) {
+    if (shouldSaveToSaas) {
       try {
-        const verifyRes = await fetch(saasInfo.verifyUrl, {
+        const verifyUrl = getSaasUrl(saasInfo, 'verifyUrl', '/api/tool/verify');
+        const verifyRes = await fetch(verifyUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: saasInfo.userId, toolId: saasInfo.toolId })
+          body: JSON.stringify({ userId, toolId })
         });
-        const verifyData = await verifyRes.json();
-        // verifyData.success handling. Check response object structure based on API_SPEC.
-        if (verifyData && verifyData.success === false) {
-           return NextResponse.json({ error: verifyData.message || verifyData.error || "积分不足" }, { status: 403 });
+        const verifyDataText = await verifyRes.text();
+        let verifyData: any = {};
+        try { verifyData = JSON.parse(verifyDataText); } catch(e) { verifyData = { error: verifyDataText.slice(0, 300) }; }
+        
+        // Ensure success field is properly checked to prevent bypass
+        if (verifyRes.ok === false || verifyData.success === false) {
+           return NextResponse.json({ error: verifyData.message || verifyData.error || "积分不足或其他校验失败" }, { status: 403 });
         }
       } catch (err: any) {
-         console.warn("Verify failed, but proceeding or intercepting depending on rules:", err);
+         console.warn("Verify failed, throwing error to stop generation:", err);
+         return NextResponse.json({ error: `前置校验失败: ${err.message}` }, { status: 500 });
       }
     }
 
@@ -61,17 +78,22 @@ export async function POST(req: Request) {
 
     parts.push({ text: prompt });
 
-    const targetModel = genModel || "gemini-3.1-flash-image-preview";
-    const response = await ai.models.generateContent({
-      model: targetModel,
-      contents: { parts },
-      config: {
-        imageConfig: {
-          aspectRatio,
-          ...(imageSize ? { imageSize } : {}),
-        }
-      }
-    });
+    let response;
+    try {
+        const targetModel = genModel || "gemini-3.1-flash-image-preview";
+        response = await ai.models.generateContent({
+          model: targetModel,
+          contents: { parts },
+          config: {
+            imageConfig: {
+              aspectRatio,
+              ...(imageSize ? { imageSize } : {}),
+            }
+          }
+        });
+    } catch(err: any) {
+        return NextResponse.json({ error: `AI 生成图片失败: ${err.message}` }, { status: 500 });
+    }
 
     if (!response.candidates?.[0]?.content?.parts) {
       throw new Error("No image generated.");
@@ -94,24 +116,25 @@ export async function POST(req: Request) {
     const finalImageBuffer = Buffer.from(generatedBase64, 'base64');
     let responseImage: any = `data:${generatedMimeType};base64,${generatedBase64}`;
 
-    if (saasInfo?.userId && saasInfo?.toolId && saasInfo?.consumeUrl) {
+    if (shouldSaveToSaas) {
       try {
-        const SAAS_ORIGIN = new URL(saasInfo.consumeUrl).origin;
-        const { userId, toolId } = saasInfo;
-        
-        // 1. Consume
-        const consumeRes = await fetch(`${SAAS_ORIGIN}/api/tool/consume`, {
+        // 2. Consume
+        const consumeUrl = getSaasUrl(saasInfo, 'consumeUrl', '/api/tool/consume');
+        const consumeRes = await fetch(consumeUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId, toolId })
         });
-        const consume = await consumeRes.json().catch(() => ({ success: false, error: 'Consume fetch parsing failed' }));
-        if (!consume.success) {
+        const consumeText = await consumeRes.text();
+        let consume: any = {};
+        try { consume = JSON.parse(consumeText); } catch(e) { consume = { error: consumeText.slice(0, 300) }; }
+        if (!consumeRes.ok || consume.success === false) {
           throw new Error(consume.error || consume.message || '扣费失败');
         }
 
-        // 2. Direct Token
-        const tokenRes = await fetch(`${SAAS_ORIGIN}/api/upload/direct-token`, {
+        // 3. Direct Token
+        const uploadTokenUrl = getSaasUrl(saasInfo, 'uploadTokenUrl', '/api/upload/direct-token');
+        const tokenRes = await fetch(uploadTokenUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -123,12 +146,14 @@ export async function POST(req: Request) {
             fileSize: finalImageBuffer.byteLength
           })
         });
-        const token = await tokenRes.json().catch(() => ({ success: false, error: 'Token fetch parsing failed' }));
-        if (!token.success) {
+        const tokenText = await tokenRes.text();
+        let token: any = {};
+        try { token = JSON.parse(tokenText); } catch(e) { token = { error: tokenText.slice(0, 300) }; }
+        if (!tokenRes.ok || token.success === false) {
           throw new Error(token.error || token.message || '获取上传凭证失败');
         }
 
-        // 3. Upload to OSS
+        // 4. Upload to OSS
         const uploadRes = await fetch(token.uploadUrl, {
           method: token.method || 'PUT',
           headers: token.headers,
@@ -136,8 +161,9 @@ export async function POST(req: Request) {
         });
         if (!uploadRes.ok) throw new Error(`OSS 上传失败: ${uploadRes.status}`);
 
-        // 4. Commit
-        const commitRes = await fetch(`${SAAS_ORIGIN}/api/upload/commit`, {
+        // 5. Commit
+        const uploadCommitUrl = getSaasUrl(saasInfo, 'uploadCommitUrl', '/api/upload/commit');
+        const commitRes = await fetch(uploadCommitUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -148,10 +174,12 @@ export async function POST(req: Request) {
             fileSize: finalImageBuffer.byteLength
           })
         });
-        const commit = await commitRes.json().catch(() => ({ success: false, error: 'Commit fetch parsing failed' }));
+        const commitText = await commitRes.text();
+        let commit: any = {};
+        try { commit = JSON.parse(commitText); } catch(e) { commit = { error: commitText.slice(0, 300) }; }
         
-        if (!commit.success && !commit.savedToRecords) {
-          throw new Error(commit.error || '图片入库失败');
+        if (!commitRes.ok || commit.success === false || commit.savedToRecords === false) {
+          throw new Error(commit.error || commit.message || '图片入库失败');
         }
 
         responseImage = commit.image || {

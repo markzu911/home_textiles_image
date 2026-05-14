@@ -11,10 +11,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No images provided" }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     if (!apiKey) {
-      return NextResponse.json({ error: "Gemini API Key missing (server)" }, { status: 500 });
+      return NextResponse.json({ error: "缺少 GEMINI_API_KEY (Server)" }, { status: 500 });
     }
 
     const ai = new GoogleGenAI({ apiKey });

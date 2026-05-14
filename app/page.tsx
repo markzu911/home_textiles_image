@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { compressImage } from "@/lib/utils";
-import { GoogleGenAI, Type } from "@google/genai";
 
 declare global {
   interface Window {
@@ -153,47 +152,18 @@ export default function Home() {
     setError(null);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
-      const prompt = "作为专业的家纺电商视觉总监，请分析这些家纺四件套的图片，提取出详细的商品特征。请按照要求的格式返回。";
-      
-      const parts: any[] = images.map((base64: string) => {
-        const [prefix, data] = base64.split(",");
-        const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-        return {
-          inlineData: { data, mimeType }
-        };
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images }),
       });
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: { parts: [{ text: prompt }, ...parts] },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              material: { type: Type.STRING, description: "材质" },
-              color: { type: Type.STRING, description: "颜色" },
-              pattern: { type: Type.STRING, description: "图案" },
-              style: { type: Type.STRING, description: "整体风格" },
-              details: { type: Type.STRING, description: "细节设计(花边、刺绣等)" },
-              sellingPoint: { type: Type.STRING, description: "核心卖点" }
-            },
-            required: ["material", "color", "pattern", "style", "details", "sellingPoint"]
-          }
-        }
-      });
-      
-      let text = response.text;
-      if (!text) throw new Error("No response text");
-      text = text.trim();
-      if (text.startsWith("```json")) {
-        text = text.replace(/^```json\n/, "").replace(/```$/, "").trim();
-      } else if (text.startsWith("```")) {
-        text = text.replace(/^```\n/, "").replace(/```$/, "").trim();
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "分析失败");
       }
 
-      setAnalysis(JSON.parse(text));
+      setAnalysis(data);
       setStep("EDIT");
     } catch (err: any) {
       console.error(err);
@@ -205,34 +175,10 @@ export default function Home() {
   const generateImage = async () => {
     if (!analysis) return;
 
-    if (saasInfo.verifyUrl) {
-      try {
-        const verifyRes = await fetch(saasInfo.verifyUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: saasInfo.userId, toolId: saasInfo.toolId })
-        });
-        const verifyData = await verifyRes.json();
-        if (!verifyData.success && !verifyData.valid) {
-          setError(verifyData.message || "积分不足");
-          return;
-        }
-      } catch (err) {
-        console.error("verify error", err);
-      }
-    }
-
     setStep("GENERATING");
     setError(null);
 
     try {
-      const targetModel = genModel || "gemini-3.1-flash-image-preview";
-      if (targetModel === "gemini-3.1-flash-image-preview") {
-        if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
-           await window.aistudio.openSelectKey();
-        }
-      }
-
       const getPrompt = (type: string) => {
         const isMain = type === "main";
         const typeName = isMain ? "电商主图" : "细节近景图";
@@ -270,7 +216,6 @@ ${modelImage ? "5. 【模特融入】：必须 100% 还原【模特参考图】�
         return basePrompt;
       };
 
-      const ai = new GoogleGenAI({ apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY });
       const imageSize = quality === "uhd" ? "4K" : quality === "hd" ? "2K" : "1K";
       const allGeneratePromises = [];
 
@@ -280,73 +225,25 @@ ${modelImage ? "5. 【模特融入】：必须 100% 还原【模特参考图】�
         for (let i = 0; i < generationCount; i++) {
           allGeneratePromises.push(
             (async () => {
-              const parts: any[] = [];
-              const [prefix, data] = images[0].split(",");
-              const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-              parts.push({ inlineData: { data, mimeType } });
-
-              if (sceneImage) {
-                const [sPrefix, sData] = sceneImage.split(",");
-                const sMimeType = sPrefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-                parts.push({ inlineData: { data: sData, mimeType: sMimeType } });
-              }
-
-              if (modelImage) {
-                const [mPrefix, mData] = modelImage.split(",");
-                const mMimeType = mPrefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-                parts.push({ inlineData: { data: mData, mimeType: mMimeType } });
-              }
-
-              parts.push({ text: prompt });
-
-              const targetModel = genModel || "gemini-3.1-flash-image-preview";
-              const response = await ai.models.generateContent({
-                model: targetModel,
-                contents: { parts },
-                config: {
-                  imageConfig: {
-                    aspectRatio,
-                    ...(imageSize ? { imageSize } : {}),
-                  }
-                }
-              });
-
-              if (!response.candidates?.[0]?.content?.parts) {
-                throw new Error("No image generated.");
-              }
-
-              let generatedBase64 = null;
-              let generatedMimeType = "image/png";
-              for (const part of response.candidates[0].content.parts) {
-                if (part.inlineData) {
-                   generatedBase64 = part.inlineData.data;
-                   if (part.inlineData.mimeType) {
-                     generatedMimeType = part.inlineData.mimeType;
-                   }
-                   break;
-                }
-              }
-
-              if (!generatedBase64) throw new Error("No image data returned from Gemini");
-
-              // Save to SAAS
-              const saasRes = await fetch("/api/saas", {
+              const res = await fetch("/api/generate", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  imageBase64: generatedBase64,
-                  mimeType: generatedMimeType,
-                  saasInfo: {
-                    ...saasInfo,
-                    saasOrigin: saasInfo.consumeUrl ? new URL(saasInfo.consumeUrl).origin : undefined
-                  }
-                })
+                  model: genModel,
+                  prompt,
+                  images,
+                  sceneImage,
+                  modelImage,
+                  aspectRatio,
+                  imageSize,
+                  saasInfo
+                }),
               });
-
-              const dataResult = await saasRes.json();
-              if (!saasRes.ok) throw new Error(dataResult.error || "SAAS 保存失败");
               
-              return dataResult.image?.url || dataResult.image || dataResult.url;
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "生成失败");
+              
+              return data.image?.url || data.image || data.url;
             })()
           );
         }

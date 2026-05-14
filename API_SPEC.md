@@ -1,45 +1,88 @@
-# SaaS 图片工具接入规范
+# SaaS 工具接入规范：积分校验与结果图入库
 
-本文档只保留图片类工具必须遵守的接入规则。工具按这里实现后，AI 生成的结果图会保存到 SaaS OSS，并显示在用户端“我的图片”和管理员端“图片管理”。
+本文档定义图片类工具接入 SaaS 平台的标准流程。旧工具重构和新工具开发都按这套方式实现。
 
-## 1. 核心规则
+## 0. 核心原则
 
-1. 用户上传给工具或 AI 的原图、参考图不上传到 SaaS OSS，也不写入图片记录。
-2. 只有 AI 最终生成成功的结果图，才保存到 SaaS OSS 和 `UserImage`。
-3. 工具不能持有 SaaS OSS 永久 AK/SK。
-4. 工具不能自己生成 `recordId`，`recordId` 必须由 SaaS `/api/upload/commit` 返回。
-5. AI 生成失败、图片处理失败、OSS 上传失败、入库失败时，都不要扣费或不要返回成功。
+1. 用户上传给工具/Gemini/AI 的原图、参考图不进入 SaaS OSS，也不写入“我的图片”。
+2. 只有 AI 最终生成成功后的结果图，才允许保存到 SaaS OSS 和 `UserImage` 表。
+3. 工具不能持有 SaaS OSS 的永久 AK/SK。
+4. 工具不能自己生成 `recordId`，也不能让 SaaS 盲信工具传回的图片记录字段。
+5. 结果图唯一保存链路是：SaaS 签发短期 OSS 上传地址，工具后端直传 OSS，SaaS `commit` 校验后入库。
 
-## 2. 必须执行的顺序
+这套方式可以避开浏览器关闭、请求体过大、多图大包中断、主站二次下载再上传等问题。
 
-每次生成都按这个顺序：
+## 1. 标准流程
 
-1. `/api/tool/verify`：生成前校验积分。
-2. 工具后端调用 AI 生成图片。
-3. 工具后端完成图片压缩、合成、裁剪等内部处理。
-4. `/api/tool/consume`：确认最终结果图生成成功后再扣费。
-5. `/api/upload/direct-token`：申请 SaaS OSS 短期直传地址。
-6. `PUT uploadUrl`：工具后端把结果图二进制直传到 OSS。
-7. `/api/upload/commit`：确认 OSS 文件存在并写入图片记录。
-8. 工具后端把 `recordId/url/fileName/fileSize` 返回给前端。
+工具每次生成都按以下顺序执行：
 
-任何一步失败，都返回：
+1. 页面初始化时调用 `/api/tool/launch` 获取用户和工具信息。
+2. 用户点击生成前调用 `/api/tool/verify` 校验积分，失败则不生成。
+3. 工具后端调用 AI 服务生成图片。
+4. 工具后端完成图片压缩、合成、裁剪、排版等内部处理。
+5. AI 生成或图片处理失败：不扣费、不上传、不入库。
+6. AI 最终结果图生成成功：工具后端调用 `/api/tool/consume` 扣费。
+7. 扣费成功后，工具后端调用 `/api/upload/direct-token` 申请短期 OSS 上传地址。
+8. 工具后端使用返回的 `uploadUrl` 直接 `PUT` 结果图到 SaaS OSS。
+9. 上传成功后，工具后端调用 `/api/upload/commit`。
+10. SaaS 校验扣费标记、`objectKey`、OSS 文件存在后，生成 `recordId` 并写入 `UserImage`。
+11. 工具后端把最终 `recordId/url/fileName/fileSize` 返回给浏览器。
 
-```json
-{ "success": false, "error": "明确的失败原因" }
-```
+失败规则：
 
-## 3. 基础接口
+- `/api/tool/verify` 失败：不调用 AI。
+- AI 生成失败：不调用 `/api/tool/consume`。
+- 工具内部图片处理失败：不调用 `/api/tool/consume`。
+- `/api/tool/consume` 失败：不上传 OSS。
+- OSS 上传失败：不调用 `/api/upload/commit`。
+- `/api/upload/commit` 失败：前端不要提示保存成功。
 
-### 校验积分：`POST /api/tool/verify`
+## 2. 基础接口
 
-请求：
+### A. 启动接口：`POST /api/tool/launch`
+
+调用时机：页面初始化。
+
+请求体：
 
 ```json
 { "userId": "string", "toolId": "string" }
 ```
 
-成功：
+成功响应：
+
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "user_xxx",
+      "name": "张三",
+      "enterprise": "某某公司",
+      "integral": 100,
+      "role": 1
+    },
+    "tool": {
+      "id": "tool_xxx",
+      "name": "AI 图片工具",
+      "integral": 10,
+      "status": "active"
+    }
+  }
+}
+```
+
+### B. 校验接口：`POST /api/tool/verify`
+
+调用时机：用户点击生成按钮后、AI 开始生成前。
+
+请求体：
+
+```json
+{ "userId": "string", "toolId": "string" }
+```
+
+成功响应：
 
 ```json
 {
@@ -51,23 +94,48 @@
 }
 ```
 
-### 扣费：`POST /api/tool/consume`
+失败响应：
 
-调用时机：AI 生成成功，并且工具内部图片处理成功之后。
+```json
+{
+  "success": false,
+  "message": "积分不足，还差 5 积分"
+}
+```
 
-请求：
+### C. 扣费接口：`POST /api/tool/consume`
+
+调用时机：AI 最终结果图生成成功，并且工具内部图片处理成功之后。
+
+请求体：
 
 ```json
 { "userId": "string", "toolId": "string" }
 ```
 
-成功后，SaaS 会给当前 `userId + toolId` 写入短时“结果图待保存”标记。后续 `direct-token` 和 `commit` 都依赖这个标记。
+成功响应：
 
-## 4. 保存结果图
+```json
+{
+  "success": true,
+  "message": "积分扣除成功",
+  "data": {
+    "currentIntegral": 90,
+    "consumedIntegral": 10,
+    "toolId": "tool_xxx"
+  }
+}
+```
 
-### 申请 OSS 直传地址：`POST /api/upload/direct-token`
+扣费成功后，SaaS 会给当前 `userId + toolId` 写入一个短时“结果图待保存”标记。后续 `/api/upload/direct-token` 和 `/api/upload/commit` 都依赖这个标记。
 
-请求：
+## 3. 唯一结果图保存接口
+
+### D. 申请 OSS 直传地址：`POST /api/upload/direct-token`
+
+调用时机：`/api/tool/consume` 成功之后，工具后端准备上传结果图前。
+
+请求体：
 
 ```json
 {
@@ -75,34 +143,41 @@
   "toolId": "string",
   "source": "result",
   "mimeType": "image/png",
-  "fileName": "result.png",
+  "fileName": "optional-result.png",
   "fileSize": 8388608
 }
 ```
 
-要求：
+字段说明：
 
 - `source` 必须是 `result`。
-- `mimeType` 必须是图片类型。
-- `fileSize` 传真实字节数。
-- 最终 `objectKey` 由 SaaS 返回，工具不要自己拼。
+- `mimeType` 必须是图片类型，如 `image/png`、`image/jpeg`、`image/webp`。
+- `fileName` 只用于推断扩展名，最终 OSS `objectKey` 由 SaaS 生成。
+- `fileSize` 推荐传真实字节数，便于日志和后续扩展校验。
 
-成功响应会包含：
+成功响应：
 
 ```json
 {
   "success": true,
+  "source": "result",
   "method": "PUT",
-  "objectKey": "result/xxx.png",
-  "uploadUrl": "https://...",
+  "objectKey": "result/1778663861275_xxx.png",
+  "fileName": "result/1778663861275_xxx.png",
+  "uploadUrl": "https://changzhou-saas.oss-cn-shanghai.aliyuncs.com/...",
+  "ossUploadUrl": "https://changzhou-saas.oss-cn-shanghai.aliyuncs.com/...",
+  "uploadStrategy": "oss-direct",
   "headers": {
     "Content-Type": "image/png"
   },
-  "commitUrl": "/api/upload/commit"
+  "commitUrl": "/api/upload/commit",
+  "expiresIn": 600,
+  "publicUrl": "https://changzhou-saas.oss-cn-shanghai.aliyuncs.com/result/xxx.png",
+  "readUrl": "https://signed-read-url..."
 }
 ```
 
-### 上传到 OSS
+工具后端拿到响应后，立即把结果图二进制上传到 `uploadUrl`：
 
 ```js
 const uploadRes = await fetch(token.uploadUrl, {
@@ -116,49 +191,70 @@ if (!uploadRes.ok) {
 }
 ```
 
-### 确认入库：`POST /api/upload/commit`
+注意：
 
-请求：
+- `uploadUrl` 是短期地址，默认 10 分钟过期。
+- 上传时必须使用 SaaS 返回的 `headers`，尤其是 `Content-Type`。
+- 上传成功只代表 OSS 有文件，还没有写入“我的图片”。必须继续调用 `/api/upload/commit`。
+
+### E. 确认上传并入库：`POST /api/upload/commit`
+
+调用时机：工具后端成功 `PUT` 到 OSS 之后。
+
+请求体：
 
 ```json
 {
   "userId": "string",
   "toolId": "string",
   "source": "result",
-  "objectKey": "result/xxx.png",
+  "objectKey": "result/1778663861275_xxx.png",
   "fileSize": 8388608
 }
 ```
 
-成功：
+成功响应：
 
 ```json
 {
   "success": true,
+  "source": "result",
   "savedToRecords": true,
   "recordId": "img_xxx",
   "url": "https://signed-read-url...",
-  "fileName": "result/xxx.png",
+  "fileName": "result/1778663861275_xxx.png",
   "image": {
     "recordId": "img_xxx",
     "url": "https://signed-read-url...",
-    "fileName": "result/xxx.png",
+    "fileName": "result/1778663861275_xxx.png",
     "savedToRecords": true
   }
 }
 ```
 
-工具必须以 `commit.image` 或响应里的 `recordId/url/fileName` 作为最终结果。
+SaaS 在 `commit` 中会做这些校验：
 
-## 5. 多图保存
+- `userId/toolId` 对应的扣费待保存标记存在且未过期。
+- `source` 是 `result`。
+- `objectKey` 合法，不能包含 `..`、反斜杠或绝对路径。
+- OSS 文件已经存在。
+- 数据库中如果已有同一 `userId + objectKey` 记录，则直接返回已有 `recordId`，避免重复入库。
 
-多张结果图不要合成一个大请求。每张图独立执行：
+工具必须以 `commit.image` 或响应里的 `recordId/url/fileName` 作为最终保存结果。
+
+## 4. 多图保存
+
+多张结果图不要合成一个大请求。
+
+工具后端应对每张图独立执行：
 
 1. `/api/upload/direct-token`
 2. `PUT uploadUrl`
 3. `/api/upload/commit`
 
-全部 `commit` 成功后，再向前端返回：
+全部图片都 `commit` 成功后，再向浏览器返回最终结果。
+
+推荐返回给工具前端的结构：
 
 ```json
 {
@@ -174,9 +270,52 @@ if (!uploadRes.ok) {
 }
 ```
 
-## 6. 工具内部图片处理要求
+## 5. 平台图片记录展示
 
-工具自己的生成接口，例如 `/api/beautify`、`/api/generate`、`/api/generate-knife`，必须先完成 AI 生成和图片处理，再进入扣费保存流程。
+工具只负责把结果图保存成功，并把 `/api/upload/commit` 返回的 `image` 或 `recordId/url/fileName/fileSize` 返回给前端。
+
+保存成功后，SaaS 平台会自动在以下页面展示图片记录：
+
+- 用户端“我的图片”：展示当前用户自己的结果图。
+- 管理员端“图片管理”：展示所有用户的结果图。
+
+图片记录查询、删除、权限控制和保留周期由 SaaS 平台负责，工具不需要实现，也不要调用图片删除接口。
+
+## 6. 工具后端生成接口要求
+
+工具可以有自己的生成接口，例如：
+
+- `/api/generate`
+- `/api/beautify`
+- `/api/generate-knife`
+- `/api/gemini`
+
+这些接口必须由工具后端完成 AI 生成、图片处理、扣费和 SaaS 保存。不要让浏览器拿到大图后再把大图 POST 到工具的 `/api/save`。
+
+正确结构：
+
+```txt
+前端 -> 工具生成接口
+工具后端 -> /api/tool/verify
+工具后端 -> AI 生成
+工具后端 -> 图片处理
+工具后端 -> /api/tool/consume
+工具后端 -> /api/upload/direct-token
+工具后端 -> PUT uploadUrl
+工具后端 -> /api/upload/commit
+工具后端 -> 前端返回结果
+```
+
+禁止结构：
+
+```txt
+前端 -> 工具生成接口拿到大图
+前端 -> 再 POST 大图到 /api/save
+```
+
+这种结构容易出现 `413 Request Entity Too Large`，也会在用户关闭页面时中断保存。
+
+## 7. 工具内部图片处理要求
 
 ### 输入图
 
@@ -245,7 +384,7 @@ left + overlayWidth <= baseWidth
 top + overlayHeight <= baseHeight
 ```
 
-## 7. 超时要求
+## 8. 超时与任务模式
 
 如果工具接口出现 `504 Gateway Time-out`，说明工具后端生成或处理耗时过长。
 
@@ -270,9 +409,36 @@ GET /api/tasks/{taskId} -> 轮询状态
 任务完成后，工具后端执行 SaaS 保存链路，并返回 recordId/url
 ```
 
-## 8. 工具后端保存函数
+## 9. 工具后端参考流程
 
 ```js
+const SAAS_ORIGIN = process.env.SAAS_ORIGIN || 'https://aibigtree.com';
+
+async function readJsonResponse(res) {
+  const text = await res.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: text.slice(0, 300) };
+  }
+
+  if (!res.ok || data.success === false) {
+    throw new Error(data.error || data.message || `请求失败: ${res.status}`);
+  }
+
+  return data;
+}
+
+async function verifyBeforeGenerate({ userId, toolId }) {
+  const res = await fetch(`${SAAS_ORIGIN}/api/tool/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, toolId })
+  });
+  return readJsonResponse(res);
+}
+
 async function saveResultImageToSaas({
   userId,
   toolId,
@@ -285,8 +451,7 @@ async function saveResultImageToSaas({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, toolId })
   });
-  const consume = await readJsonResponse(consumeRes);
-  if (!consume.success) throw new Error(consume.error || consume.message || '扣费失败');
+  await readJsonResponse(consumeRes);
 
   const tokenRes = await fetch(`${SAAS_ORIGIN}/api/upload/direct-token`, {
     method: 'POST',
@@ -307,7 +472,9 @@ async function saveResultImageToSaas({
     headers: token.headers,
     body: imageBuffer
   });
-  if (!uploadRes.ok) throw new Error(`OSS 上传失败: ${uploadRes.status}`);
+  if (!uploadRes.ok) {
+    throw new Error(`OSS 上传失败: ${uploadRes.status}`);
+  }
 
   const commitRes = await fetch(`${SAAS_ORIGIN}/api/upload/commit`, {
     method: 'POST',
@@ -321,36 +488,76 @@ async function saveResultImageToSaas({
     })
   });
   const commit = await readJsonResponse(commitRes);
-  if (!commit.success || !commit.savedToRecords) {
+  if (!commit.savedToRecords) {
     throw new Error(commit.error || '图片入库失败');
   }
 
   return commit.image;
 }
+```
 
-async function readJsonResponse(res) {
-  const text = await res.text();
-  let data = {};
+生成接口示例：
+
+```js
+export async function POST(request) {
   try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { error: text.slice(0, 300) };
-  }
+    const { userId, toolId, ...params } = await request.json();
 
-  if (!res.ok || data.success === false) {
-    throw new Error(data.error || data.message || `请求失败: ${res.status}`);
-  }
+    await verifyBeforeGenerate({ userId, toolId });
 
-  return data;
+    const aiImageBuffer = await generateImage(params);
+    const finalImageBuffer = await postProcessImage(aiImageBuffer);
+
+    const image = await saveResultImageToSaas({
+      userId,
+      toolId,
+      imageBuffer: finalImageBuffer,
+      mimeType: 'image/png',
+      fileName: 'result.png'
+    });
+
+    return Response.json({ success: true, image });
+  } catch (error) {
+    console.error('Generate tool error:', error);
+    return Response.json(
+      { success: false, error: error.message || '生成失败' },
+      { status: 500 }
+    );
+  }
 }
 ```
 
-## 9. 禁止事项
+## 10. Iframe 初始化消息
 
-1. 不要把用户原图、参考图上传到 SaaS OSS。
+SaaS 会通过 `postMessage` 给工具传初始化信息。工具也可以从 URL 参数读取 `userId/toolId`，但推荐以初始化消息为准。
+
+```js
+window.addEventListener('message', (event) => {
+  if (event.data?.type !== 'SAAS_INIT') return;
+
+  const {
+    userId,
+    toolId,
+    launchUrl,
+    verifyUrl,
+    consumeUrl,
+    uploadTokenUrl,
+    uploadCommitUrl
+  } = event.data;
+});
+```
+
+如果没有收到初始化消息，工具可以从 URL 读取 `userId/toolId`，接口域名使用当前 SaaS 域名。
+
+## 11. 禁止事项
+
+1. 不要把用户原图/参考图上传到 SaaS OSS。
 2. 不要把 OSS 永久 AK/SK 放进工具项目。
-3. 不要在 AI 生成失败或图片处理失败时扣费。
-4. 不要让浏览器负责最终保存，保存必须在工具后端完成。
-5. 不要让工具自己生成 `recordId`。
-6. 不要跳过 `sharp().composite()` 前的尺寸检查。
-7. 不要让同步生成接口无限等待。
+3. 结果图保存必须由工具后端完成，不要依赖浏览器在页面关闭前完成保存。
+4. 结果图保存只使用 `/api/upload/direct-token`、OSS `PUT`、`/api/upload/commit`。
+5. 不要让工具自己生成 `recordId` 或让 SaaS 直接信任工具传回的 URL 入库。
+6. 不要在 AI 生成失败或图片处理失败时调用 `/api/tool/consume`。
+7. 不要同一次生成既直接调用 `/api/tool/consume`，又发 `SAAS_CONSUME` 消息，否则可能重复扣费。
+8. 不要让前端把大图 POST 到工具的 `/api/save`。
+9. 不要跳过 `sharp().composite()` 前的尺寸检查。
+10. 不要让同步生成接口无限等待。

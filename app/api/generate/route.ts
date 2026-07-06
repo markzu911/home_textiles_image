@@ -1,6 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
-import crypto from "crypto";
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -60,10 +59,18 @@ export async function POST(req: Request) {
 
     const ai = new GoogleGenAI({ apiKey });
 
+    if (!prompt || typeof prompt !== "string") {
+      return NextResponse.json({ error: "缺少生成提示词" }, { status: 400 });
+    }
+
     const parts: any[] = [];
-    const [prefix, data] = images[0].split(",");
-    const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-    parts.push({ inlineData: { data, mimeType } });
+    const sourceImages = Array.isArray(images) ? images.filter(Boolean) : [];
+    for (const image of sourceImages) {
+      const [prefix, data] = image.split(",");
+      if (!data) continue;
+      const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
+      parts.push({ inlineData: { data, mimeType } });
+    }
 
     if (sceneImage) {
       const [sPrefix, sData] = sceneImage.split(",");
@@ -213,4 +220,3 @@ export async function POST(req: Request) {
     }, { status: 500 });
   }
 }
-

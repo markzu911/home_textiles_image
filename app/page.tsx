@@ -128,6 +128,24 @@ interface ChatGenerationSettings {
   generationCount: number;
 }
 
+type ChatIntentActionName = "analyze_image" | "generate_smart" | "update_config" | "none";
+type ChatDetectedImageType = "product" | "scene" | "model" | "none";
+
+interface ChatIntentAction {
+  action: ChatIntentActionName;
+  actionExplanation?: string;
+  detectedImageType?: ChatDetectedImageType;
+  directGenerate?: boolean;
+  smartParams?: {
+    type?: ImageType;
+    config?: Partial<ChatGenerationSettings> & {
+      imageType?: ImageType;
+    };
+    analysis?: Partial<AnalysisResult>;
+    extraInstruction?: string;
+  };
+}
+
 const DEFAULT_GEN_MODEL = "gemini-3.1-flash-image-preview";
 const DEFAULT_ASPECT_RATIO = "3:4";
 
@@ -171,6 +189,83 @@ const getAspectClassName = (ratio: string) => {
   if (ratio === "4:3") return "aspect-[4/3]";
   if (ratio === "16:9") return "aspect-video";
   return "aspect-[3/4]";
+};
+
+const isValidAspectRatio = (value: unknown): value is string => {
+  return typeof value === "string" && ASPECT_RATIO_OPTIONS.some((option) => option.value === value);
+};
+
+const isValidImageType = (value: unknown): value is ImageType => {
+  return value === "main" || value === "closeup";
+};
+
+const normalizeGenerationCount = (value: unknown, fallback: number) => {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return fallback;
+  return Math.min(4, Math.max(1, Math.round(numericValue)));
+};
+
+const extractChatReply = (raw: string) => {
+  const actionIndex = raw.indexOf("[ACTION]");
+  let reply = actionIndex >= 0 ? raw.slice(0, actionIndex) : raw;
+  reply = reply.replace(/^\s*\[REPLY\]\s*/i, "").trim();
+  return reply;
+};
+
+const parseChatIntentAction = (raw: string): ChatIntentAction | null => {
+  const actionIndex = raw.indexOf("[ACTION]");
+  if (actionIndex < 0) return null;
+
+  let actionText = raw.slice(actionIndex + "[ACTION]".length).trim();
+  actionText = actionText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+
+  const firstBrace = actionText.indexOf("{");
+  const lastBrace = actionText.lastIndexOf("}");
+  if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+
+  try {
+    const parsed = JSON.parse(actionText.slice(firstBrace, lastBrace + 1));
+    if (
+      parsed?.action === "analyze_image" ||
+      parsed?.action === "generate_smart" ||
+      parsed?.action === "update_config" ||
+      parsed?.action === "none"
+    ) {
+      return parsed as ChatIntentAction;
+    }
+  } catch (error) {
+    console.error("Failed to parse chat ACTION:", error, actionText);
+  }
+
+  return null;
+};
+
+const getSettingsFromChatIntent = (
+  intent: ChatIntentAction | null,
+  text: string,
+  current: ChatGenerationSettings
+): ChatGenerationSettings => {
+  const next = inferChatSettingsFromText(text, current);
+  const smartParams = intent?.smartParams;
+  const config = smartParams?.config || {};
+
+  if (isValidImageType(smartParams?.type)) next.imageType = smartParams.type;
+  if (isValidImageType(config.imageType)) next.imageType = config.imageType;
+  if (isValidAspectRatio(config.aspectRatio)) next.aspectRatio = config.aspectRatio;
+  if (typeof config.style === "string" && config.style.trim()) next.style = config.style.trim();
+  if (config.generationCount !== undefined) {
+    next.generationCount = normalizeGenerationCount(config.generationCount, next.generationCount);
+  }
+
+  return next;
+};
+
+const serializeChatMessagesForApi = (messages: ChatMessage[]) => {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content || "",
+    images: message.images || [],
+  }));
 };
 
 const createFallbackAnalysis = (instruction: string, style?: string | null): AnalysisResult => ({
@@ -850,7 +945,8 @@ export default function Home() {
 
   const generateChatImage = async (
     briefOverride?: string,
-    settingsOverride?: Partial<ChatGenerationSettings>
+    settingsOverride?: Partial<ChatGenerationSettings>,
+    analysisOverride?: AnalysisResult | null
   ) => {
     const activeBrief = (briefOverride ?? chatBrief).trim();
     const activeStyle = settingsOverride?.style ?? chatStyle;
@@ -894,7 +990,7 @@ export default function Home() {
 
     try {
       const prompt = buildGenerationPrompt({
-        analysis: getChatAnalysis(activeBrief, activeStyle),
+        analysis: analysisOverride || getChatAnalysis(activeBrief, activeStyle),
         imageType: activeImageType,
         hasProductImages: chatImages.length > 0,
         sceneImage: chatSceneImage,
@@ -1045,13 +1141,83 @@ export default function Home() {
     }
   };
 
+  const getActionsForChatIntent = (intent: ChatIntentAction | null, text: string): ChatAction[] => {
+    const uploadActions: ChatAction[] = [];
+    if (/商品图|产品图|原图|上传商品|上传产品|传商品|传产品/.test(text)) {
+      uploadActions.push({ type: "uploadProduct", label: "上传商品图" });
+    }
+    if (/场景图|参考图|空间图|上传场景|传场景/.test(text)) {
+      uploadActions.push({ type: "uploadScene", label: "上传场景图" });
+    }
+    if (/模特图|人物图|真人图|上传模特|传模特/.test(text)) {
+      uploadActions.push({ type: "uploadModel", label: "上传模特图" });
+    }
+
+    if (intent?.action === "analyze_image" && chatImages.length === 0) {
+      return [{ type: "uploadProduct", label: "上传商品图" }];
+    }
+
+    if (intent?.action === "generate_smart") {
+      return intent.directGenerate ? [] : getReadyToGenerateActions();
+    }
+
+    if (intent?.action === "update_config") {
+      const parameterActions = getParameterActionsForText(text);
+      return parameterActions.length > 0
+        ? [...parameterActions, { type: "generate", label: "按当前参数生成" }]
+        : getReadyToGenerateActions();
+    }
+
+    if (uploadActions.length > 0) return uploadActions;
+
+    return chatImages.length > 0 ? getReadyToGenerateActions() : getChatGenerationActions();
+  };
+
+  const applyChatIntentSettings = (
+    settings: ChatGenerationSettings,
+    analysisPatch?: Partial<AnalysisResult>,
+    instruction = ""
+  ) => {
+    if (settings.style !== chatStyle) {
+      setChatStyle(settings.style);
+    }
+    if (settings.aspectRatio !== chatAspectRatio) {
+      setChatAspectRatio(settings.aspectRatio);
+    }
+    if (settings.imageType !== chatImageType) {
+      setChatImageType(settings.imageType);
+      setChatStage(chatImages.length > 0 ? "optionalRefs" : "uploadProduct");
+    }
+    if (settings.generationCount !== chatGenerationCount) {
+      setChatGenerationCount(settings.generationCount);
+    }
+
+    const hasAnalysisPatch = analysisPatch && Object.values(analysisPatch).some(Boolean);
+    if (hasAnalysisPatch) {
+      const base = chatAnalysis || createFallbackAnalysis(instruction, settings.style);
+      const nextAnalysis: AnalysisResult = {
+        material: analysisPatch?.material || base.material,
+        color: analysisPatch?.color || base.color,
+        pattern: analysisPatch?.pattern || base.pattern,
+        style: analysisPatch?.style || settings.style || base.style,
+        details: analysisPatch?.details || base.details,
+        sellingPoint: analysisPatch?.sellingPoint || base.sellingPoint,
+      };
+      setChatAnalysis(nextAnalysis);
+      return nextAnalysis;
+    }
+
+    if (settings.style) {
+      setChatAnalysis((prev) => (prev ? { ...prev, style: settings.style || prev.style } : prev));
+    }
+
+    return null;
+  };
+
   const handleChatSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const text = chatInput.trim();
     if (!text || chatIsBusy) return;
-
-    setChatInput("");
-    addChatMessage({ role: "user", content: text });
 
     const currentSettings: ChatGenerationSettings = {
       style: chatStyle,
@@ -1059,78 +1225,123 @@ export default function Home() {
       imageType: chatImageType,
       generationCount: chatGenerationCount,
     };
-    const nextSettings = inferChatSettingsFromText(text, currentSettings);
-    const parameterActions = getParameterActionsForText(text);
-    const explicitGenerate =
-      /生成|出图|做图|做一张|来一张|画一张|开始|generate|create/i.test(text);
-    const shouldGenerate = explicitGenerate;
-    const isParameterOnlyRequest =
-      !shouldGenerate &&
-      parameterActions.length > 0 &&
-      !/上传|补充|传/.test(text) &&
-      !/卧室|床品|家纺|四件套|被套|枕套|面料|颜色|图案|花纹|清晨|自然光|质感|场景/.test(text);
-    const uploadActions: ChatAction[] = [];
-
-    if (/商品图|产品图|原图/.test(text)) {
-      uploadActions.push({ type: "uploadProduct", label: "上传商品图" });
-    }
-    if (/场景图|参考图|空间图/.test(text)) {
-      uploadActions.push({ type: "uploadScene", label: "上传场景图" });
-    }
-    if (/模特图|人物图/.test(text)) {
-      uploadActions.push({ type: "uploadModel", label: "上传模特图" });
-    }
-
-    if (nextSettings.style !== chatStyle) {
-      setChatStyle(nextSettings.style);
-      setChatAnalysis((prev) =>
-        prev && nextSettings.style ? { ...prev, style: nextSettings.style } : prev
-      );
-    }
-    if (nextSettings.aspectRatio !== chatAspectRatio) {
-      setChatAspectRatio(nextSettings.aspectRatio);
-    }
-    if (nextSettings.imageType !== chatImageType) {
-      setChatImageType(nextSettings.imageType);
-    }
-    if (nextSettings.generationCount !== chatGenerationCount) {
-      setChatGenerationCount(nextSettings.generationCount);
-    }
-
-    if (isParameterOnlyRequest) {
-      addChatMessage({
-        role: "assistant",
-        content: "可以，在这里选就行。",
-        actions: parameterActions,
-      });
-      return;
-    }
-
-    if (!shouldGenerate && uploadActions.length > 0) {
-      addChatMessage({
-        role: "assistant",
-        content: "可以，从这里上传对应图片。",
-        actions: uploadActions,
-      });
-      return;
-    }
-
-    const nextBrief = chatBrief ? `${chatBrief}\n${text}` : text;
-    setChatBrief(nextBrief);
-
-    if (shouldGenerate) {
-      await generateChatImage(nextBrief, nextSettings);
-      return;
-    }
-
-    addChatMessage({
+    const userMessage: ChatMessage = {
+      id: getChatId(),
+      role: "user",
+      content: text,
+    };
+    const assistantId = getChatId();
+    const assistantMessage: ChatMessage = {
+      id: assistantId,
       role: "assistant",
-      content:
-        chatImages.length > 0
-          ? "我已把这句作为补充要求。你可以继续说，也可以现在生成。"
-          : "我已记下你的画面要求。可以继续补充，也可以直接按文字生成。",
-      actions: chatImages.length > 0 ? getReadyToGenerateActions() : getChatGenerationActions(),
-    });
+      content: "正在理解你的画面需求...",
+    };
+    const nextMessages = [...chatMessages, userMessage];
+    let handedOffToGeneration = false;
+
+    setChatInput("");
+    setChatIsBusy(true);
+    setChatMessages((prev) => [...prev, userMessage, assistantMessage]);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: serializeChatMessagesForApi(nextMessages),
+          currentSettings,
+          currentAnalysis: chatAnalysis,
+          hasProductImages: chatImages.length > 0,
+          hasSceneImage: !!chatSceneImage,
+          hasModelImage: !!chatModelImage,
+          saasInfo,
+        }),
+      });
+
+      if (!response.ok) {
+        let errorMessage = `AI 对话解析失败 (${response.status})`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorMessage;
+        } catch {}
+        throw new Error(errorMessage);
+      }
+
+      if (!response.body) {
+        throw new Error("AI 对话未返回可读流");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let accumulatedText = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        accumulatedText += decoder.decode(value, { stream: true });
+        const reply = extractChatReply(accumulatedText);
+        updateChatMessage(assistantId, {
+          content: reply || "正在理解你的画面需求...",
+        });
+      }
+
+      accumulatedText += decoder.decode();
+      const intent = parseChatIntentAction(accumulatedText);
+      const reply = extractChatReply(accumulatedText) || "我已理解你的需求。";
+      const nextSettings = getSettingsFromChatIntent(intent, text, currentSettings);
+      const actionInstruction = intent?.smartParams?.extraInstruction?.trim() || text;
+      const nextBrief = chatBrief ? `${chatBrief}\n${actionInstruction}` : actionInstruction;
+      const isUploadOnlyRequest =
+        intent?.action === "none" && /上传|补充|传/.test(text) && /商品图|产品图|原图|场景图|参考图|空间图|模特图|人物图|真人图/.test(text);
+      const analysisOverride = applyChatIntentSettings(
+        nextSettings,
+        intent?.smartParams?.analysis,
+        actionInstruction
+      );
+      const actions = getActionsForChatIntent(intent, text);
+
+      if (
+        intent?.action === "generate_smart" ||
+        intent?.action === "update_config" ||
+        (intent?.action === "none" && !isUploadOnlyRequest)
+      ) {
+        setChatBrief(nextBrief);
+      }
+
+      updateChatMessage(assistantId, {
+        content: reply,
+        actions,
+      });
+
+      if (!intent) {
+        return;
+      }
+
+      if (intent.action === "analyze_image") {
+        if (chatImages.length === 0) {
+          return;
+        }
+        setChatIsBusy(false);
+        await runChatAnalysis();
+        return;
+      }
+
+      if (intent.action === "generate_smart" && intent.directGenerate) {
+        handedOffToGeneration = true;
+        setChatIsBusy(false);
+        await generateChatImage(nextBrief, nextSettings, analysisOverride);
+      }
+    } catch (err: any) {
+      updateChatMessage(assistantId, {
+        content: err.message || "AI 对话解析失败，请稍后重试。",
+        actions: getChatGenerationActions(),
+      });
+    } finally {
+      if (!handedOffToGeneration) {
+        setChatIsBusy(false);
+      }
+    }
   };
 
   return (

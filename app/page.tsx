@@ -864,6 +864,7 @@ function ChatGenerationResultCard({
 
 export default function Home() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("HOME");
+  const [chatShellHeight, setChatShellHeight] = useState("100dvh");
   const [step, setStep] = useState<Step>("UPLOAD");
   const [images, setImages] = useState<string[]>([]);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -917,6 +918,7 @@ export default function Home() {
   const chatProductInputRef = useRef<HTMLInputElement>(null);
   const chatSceneInputRef = useRef<HTMLInputElement>(null);
   const chatModelInputRef = useRef<HTMLInputElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
   const openImagePreview = (items: string[], index = 0) => {
@@ -986,6 +988,31 @@ export default function Home() {
     if (!target) return;
     target.scrollTo({ top: target.scrollHeight, behavior: "smooth" });
   }, [chatMessages, workspaceMode]);
+
+  useEffect(() => {
+    if (workspaceMode !== "CHAT") {
+      return;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+
+    const updateChatShellHeight = () => {
+      const top = Math.max(0, mainRef.current?.getBoundingClientRect().top || 0);
+      setChatShellHeight(`calc(100dvh - ${Math.round(top)}px)`);
+    };
+
+    updateChatShellHeight();
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    window.addEventListener("resize", updateChatShellHeight);
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      window.removeEventListener("resize", updateChatShellHeight);
+    };
+  }, [workspaceMode]);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1800,9 +1827,17 @@ export default function Home() {
   );
 
   return (
-    <main className="flex-1 flex flex-col">
+    <main
+      ref={mainRef}
+      style={workspaceMode === "CHAT" ? { height: chatShellHeight } : undefined}
+      className={`flex flex-col ${
+        workspaceMode === "CHAT"
+          ? "min-h-0 overflow-hidden"
+          : "min-h-screen overflow-visible"
+      }`}
+    >
       {/* Header */}
-      <header className="w-full py-6 px-8 border-b border-[#1a1a1a]/10 flex justify-between items-center bg-white/50 backdrop-blur-md sticky top-0 z-50">
+      <header className="w-full shrink-0 py-6 px-8 border-b border-[#1a1a1a]/10 flex justify-between items-center bg-white/50 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full border border-[#1a1a1a]/20 flex items-center justify-center bg-white">
             <Sparkles className="w-5 h-5 text-[#1a1a1a]" />
@@ -2526,7 +2561,7 @@ export default function Home() {
 
                 <div
                   ref={chatScrollRef}
-                  className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 lg:p-8 space-y-5 lg:space-y-6 bg-[#faf8f4]"
+                  className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5 lg:p-8 space-y-5 lg:space-y-6 bg-[#faf8f4]"
                 >
                   {chatMessages.map((message, index) => {
                     const isUser = message.role === "user";

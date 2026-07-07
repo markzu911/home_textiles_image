@@ -1885,7 +1885,13 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center p-6 md:p-12 relative overflow-y-auto">
+      <div
+        className={`flex-1 flex flex-col relative ${
+          workspaceMode === "CHAT"
+            ? "min-h-0 items-center overflow-hidden p-3 sm:p-4 lg:p-6 xl:p-8"
+            : "items-center overflow-y-auto p-6 md:p-12"
+        }`}
+      >
         <AnimatePresence mode="wait">
           {workspaceMode === "HOME" && (
             <motion.div
@@ -2471,7 +2477,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="w-full max-w-5xl"
+              className="w-full max-w-[92rem] flex flex-1 min-h-0"
             >
               <input
                 type="file"
@@ -2495,8 +2501,8 @@ export default function Home() {
                 onChange={handleChatModelUpload}
               />
 
-              <section className="bg-white rounded-[32px] border border-[#1a1a1a]/5 shadow-[0_8px_30px_rgb(0,0,0,0.04)] overflow-hidden flex flex-col min-h-[38rem] max-h-[calc(100vh-12rem)]">
-                <div className="px-6 py-5 border-b border-[#1a1a1a]/10 flex items-center justify-between gap-4">
+              <section className="w-full flex-1 min-h-0 bg-white rounded-[24px] sm:rounded-[32px] border border-[#1a1a1a]/5 shadow-[0_12px_38px_rgb(0,0,0,0.05)] overflow-hidden flex flex-col">
+                <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-5 border-b border-[#1a1a1a]/10 flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-[#1a1a1a] text-white flex items-center justify-center">
                       <Bot className="w-5 h-5" />
@@ -2520,7 +2526,7 @@ export default function Home() {
 
                 <div
                   ref={chatScrollRef}
-                  className="flex-1 overflow-y-auto p-5 md:p-6 space-y-6 bg-[#faf8f4]"
+                  className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 lg:p-8 space-y-5 lg:space-y-6 bg-[#faf8f4]"
                 >
                   {chatMessages.map((message, index) => {
                     const isUser = message.role === "user";
@@ -2543,7 +2549,7 @@ export default function Home() {
                         )}
 
                         <div
-                          className={`max-w-[min(42rem,86%)] flex flex-col ${isUser ? "items-end" : "items-start"}`}
+                          className={`max-w-[min(58rem,88%)] flex flex-col ${isUser ? "items-end" : "items-start"}`}
                         >
                           {message.content && (
                             <div
@@ -2713,7 +2719,7 @@ export default function Home() {
 
                 <form
                   onSubmit={handleChatSubmit}
-                  className="p-4 border-t border-[#1a1a1a]/10 bg-white flex items-end gap-3"
+                  className="p-3 sm:p-4 lg:px-6 border-t border-[#1a1a1a]/10 bg-white flex items-end gap-3"
                 >
                   <div className="relative pb-1">
                     <AnimatePresence>

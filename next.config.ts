@@ -5,6 +5,9 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  experimental: {
+    middlewareClientMaxBodySize: "25mb",
+  },
   // Allow access to remote image placeholder.
   output: "standalone",
   images: {

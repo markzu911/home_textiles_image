@@ -5,7 +5,18 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export async function compressImage(file: File, maxWidth = 1200, maxHeight = 1200, quality = 0.8): Promise<string> {
+const getDataUrlByteSize = (dataUrl: string) => {
+  const base64 = dataUrl.split(",")[1] || "";
+  return Math.ceil((base64.length * 3) / 4);
+};
+
+export async function compressImage(
+  file: File,
+  maxWidth = 1400,
+  maxHeight = 1400,
+  quality = 0.82,
+  maxBytes = 700 * 1024
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -43,15 +54,39 @@ export async function compressImage(file: File, maxWidth = 1200, maxHeight = 120
         ctx.fillRect(0, 0, width, height);
 
         ctx.drawImage(img, 0, 0, width, height);
-        
-        // Determine the output format
-        let outputFormat = "image/jpeg";
-        if (file.type === "image/png" || file.type === "image/webp") {
-          outputFormat = file.type;
+
+        let currentCanvas = canvas;
+        let currentQuality = quality;
+        let dataUrl = currentCanvas.toDataURL("image/jpeg", currentQuality);
+
+        for (let attempt = 0; attempt < 10 && getDataUrlByteSize(dataUrl) > maxBytes; attempt++) {
+          if (currentQuality > 0.48) {
+            currentQuality = Math.max(0.48, currentQuality - 0.08);
+            dataUrl = currentCanvas.toDataURL("image/jpeg", currentQuality);
+            continue;
+          }
+
+          const scaledWidth = Math.max(640, Math.round(currentCanvas.width * 0.86));
+          const scaledHeight = Math.max(640, Math.round(currentCanvas.height * 0.86));
+          if (scaledWidth === currentCanvas.width && scaledHeight === currentCanvas.height) {
+            break;
+          }
+
+          const scaledCanvas = document.createElement("canvas");
+          scaledCanvas.width = scaledWidth;
+          scaledCanvas.height = scaledHeight;
+          const scaledCtx = scaledCanvas.getContext("2d");
+          if (!scaledCtx) {
+            break;
+          }
+          scaledCtx.fillStyle = "#ffffff";
+          scaledCtx.fillRect(0, 0, scaledWidth, scaledHeight);
+          scaledCtx.drawImage(currentCanvas, 0, 0, scaledWidth, scaledHeight);
+          currentCanvas = scaledCanvas;
+          currentQuality = 0.72;
+          dataUrl = currentCanvas.toDataURL("image/jpeg", currentQuality);
         }
 
-        // Generate data URL
-        const dataUrl = canvas.toDataURL(outputFormat, quality);
         resolve(dataUrl);
       };
       img.onerror = () => reject(new Error("Failed to load image"));

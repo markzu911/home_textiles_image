@@ -453,6 +453,9 @@ const readJsonResponse = async (res: Response, fallbackPrefix: string) => {
   if (contentType && contentType.includes("application/json")) {
     return res.json();
   }
+  if (res.status === 413) {
+    throw new Error("图片体积过大：已自动压缩，但当前参考图数量或尺寸仍超出服务端限制。请减少参考图后重试。");
+  }
   await res.text();
   throw new Error(`${fallbackPrefix} (${res.status}): 请重试`);
 };

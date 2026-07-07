@@ -37,6 +37,7 @@ declare global {
 type WorkspaceMode = "HOME" | "STANDARD" | "CHAT";
 type Step = "UPLOAD" | "ANALYZING" | "EDIT" | "GENERATING" | "RESULT";
 type ImageType = "main" | "closeup";
+type ChatStage = "chooseType" | "uploadProduct" | "optionalRefs" | "ready";
 type ChatActionType =
   | "uploadProduct"
   | "uploadScene"
@@ -83,6 +84,12 @@ interface ChatGeneration {
   error?: string;
   note?: string;
   aspectRatio?: string;
+  title?: string;
+  imageType?: ImageType;
+  style?: string | null;
+  count?: number;
+  hasScene?: boolean;
+  hasModel?: boolean;
 }
 
 interface ChatMessage {
@@ -144,8 +151,12 @@ const IMAGE_TYPE_OPTIONS = [
 ];
 
 const CHAT_WELCOME_ACTIONS: ChatAction[] = [
-  { type: "uploadProduct", label: "上传商品图", description: "可选，保持花色与细节一致" },
-  { type: "generate", label: "直接按文字生成" },
+  { type: "imageType", label: "生成商品主图", value: "main", description: "整体视觉效果和电商首图" },
+  { type: "imageType", label: "生成细节近景", value: "closeup", description: "面料纹理、做工和花型特写" },
+  { type: "uploadProduct", label: "上传商品图", description: "用于还原花型、颜色、材质和细节" },
+  { type: "uploadScene", label: "上传自定义场景", description: "可选，复刻房间结构、家具和光影" },
+  { type: "uploadModel", label: "上传模特图", description: "可选，生成真人互动场景" },
+  { type: "style", label: "现代轻奢风", value: PRESET_STYLES[2] },
 ];
 
 const getChatId = () => {
@@ -170,6 +181,40 @@ const createFallbackAnalysis = (instruction: string, style?: string | null): Ana
   details: instruction || "高级质感家纺四件套，画面干净，细节清晰",
   sellingPoint: "舒适触感、高端质感、生活方式氛围与电商转化友好",
 });
+
+const getTypeSelectedActions = (): ChatAction[] => [
+  { type: "uploadProduct", label: "上传商品图", description: "用于还原花型、颜色、材质和细节" },
+  { type: "style", label: "温馨奶油风", value: PRESET_STYLES[3] },
+  { type: "generate", label: "按文字直接生成" },
+];
+
+const getOptionalReferenceActions = (): ChatAction[] => [
+  { type: "uploadScene", label: "上传自定义场景", description: "可选，复刻房间结构、家具和光影" },
+  { type: "uploadModel", label: "上传模特图", description: "可选，生成真人互动场景" },
+  { type: "style", label: "极简原木风", value: PRESET_STYLES[0] },
+  { type: "style", label: "现代轻奢风", value: PRESET_STYLES[2] },
+  { type: "generate", label: "不用补充，直接生成" },
+];
+
+const getReadyToGenerateActions = (): ChatAction[] => [
+  { type: "aspect", label: "3:4 竖版", value: "3:4" },
+  { type: "aspect", label: "1:1 方图", value: "1:1" },
+  { type: "count", label: "生成 1 张", value: "1" },
+  { type: "count", label: "生成 2 张", value: "2" },
+  { type: "generate", label: "生成图片" },
+];
+
+const getChatGenerationActions = (): ChatAction[] => {
+  return [
+    { type: "imageType", label: "商品主图", value: "main", description: "整体视觉效果" },
+    { type: "imageType", label: "细节近景", value: "closeup", description: "面料与做工特写" },
+    { type: "uploadScene", label: "上传自定义场景", description: "可选，覆盖默认风格" },
+    { type: "uploadModel", label: "上传模特图", description: "可选，生成真人互动效果" },
+    { type: "style", label: "温馨奶油风", value: PRESET_STYLES[3] },
+    { type: "aspect", label: "1:1 方图", value: "1:1" },
+    { type: "generate", label: "生成图片" },
+  ];
+};
 
 const inferChatSettingsFromText = (
   text: string,
@@ -395,10 +440,10 @@ export default function Home() {
   });
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
-        id: "welcome",
-        role: "assistant",
-        content:
-        "欢迎来到 AI 对话生图。直接说你想要的家纺画面就行；需要上传图片、选择风格或比例时，我会在对话里给你对应卡片。",
+      id: "welcome",
+      role: "assistant",
+      content:
+        "AI 对话生图沿用常规生图逻辑：可以生成商品主图或细节近景，也可以上传商品图、自定义场景图或模特图，再用文字补充要求。",
       actions: CHAT_WELCOME_ACTIONS,
     },
   ]);
@@ -408,6 +453,7 @@ export default function Home() {
   const [chatSceneImage, setChatSceneImage] = useState<string | null>(null);
   const [chatModelImage, setChatModelImage] = useState<string | null>(null);
   const [chatAnalysis, setChatAnalysis] = useState<AnalysisResult | null>(null);
+  const [chatStage, setChatStage] = useState<ChatStage>("chooseType");
   const [chatStyle, setChatStyle] = useState<string | null>(null);
   const [chatAspectRatio, setChatAspectRatio] = useState(DEFAULT_ASPECT_RATIO);
   const [chatImageType, setChatImageType] = useState<ImageType>("main");
@@ -604,7 +650,7 @@ export default function Home() {
         id: getChatId(),
         role: "assistant",
         content:
-          "欢迎来到 AI 对话生图。直接说你想要的家纺画面就行；需要上传图片、选择风格或比例时，我会在对话里给你对应卡片。",
+          "AI 对话生图沿用常规生图逻辑：可以生成商品主图或细节近景，也可以上传商品图、自定义场景图或模特图，再用文字补充要求。",
         actions: CHAT_WELCOME_ACTIONS,
       },
     ]);
@@ -614,6 +660,7 @@ export default function Home() {
     setChatSceneImage(null);
     setChatModelImage(null);
     setChatAnalysis(null);
+    setChatStage("chooseType");
     setChatStyle(null);
     setChatAspectRatio(DEFAULT_ASPECT_RATIO);
     setChatImageType("main");
@@ -664,15 +711,11 @@ export default function Home() {
       const data = await analyzeImages(targetImages);
       const nextAnalysis = chatStyle ? { ...data, style: chatStyle } : data;
       setChatAnalysis(nextAnalysis);
+      setChatStage("optionalRefs");
       updateChatMessage(statusId, {
         content:
-          "商品特征已提取完成。你可以继续补充场景、选择比例或直接生成图片。",
-        actions: [
-          { type: "generate", label: "生成图片" },
-          { type: "uploadScene", label: "上传场景图" },
-          { type: "imageType", label: "细节近景", value: "closeup" },
-          { type: "aspect", label: "1:1 方图", value: "1:1" },
-        ],
+          "商品图已分析完成。我会按常规生图逻辑保留商品材质、颜色、图案和细节。你可以选择生成商品主图或细节近景，也可以继续上传自定义场景或模特图。",
+        actions: getChatGenerationActions(),
       });
       return nextAnalysis;
     } catch (err: any) {
@@ -702,7 +745,7 @@ export default function Home() {
       setChatImages(nextImages);
       addChatMessage({
         role: "user",
-        content: `已上传 ${compressedImages.length} 张商品图`,
+        content: `已上传 ${compressedImages.length} 张商品参考图`,
         images: compressedImages,
       });
       setChatIsBusy(false);
@@ -734,10 +777,21 @@ export default function Home() {
       });
       addChatMessage({
         role: "assistant",
-        content: "收到场景图。生成时我会优先复刻这张图里的空间、家具、光影和氛围。",
+        content: "收到自定义场景图。生成时我会优先参考这张图里的空间、家具、光影和氛围。",
         actions: [
+          ...(chatModelImage
+            ? []
+            : [
+                {
+                  type: "uploadModel",
+                  label: "上传模特图",
+                  description: "可选，用于真人互动效果",
+                } as ChatAction,
+              ]),
+          { type: "imageType", label: "商品主图", value: "main" },
+          { type: "imageType", label: "细节近景", value: "closeup" },
+          { type: "aspect", label: "3:4 竖版", value: "3:4" },
           { type: "generate", label: "生成图片" },
-          { type: "uploadProduct", label: "补充商品图" },
         ],
       });
     } catch (err: any) {
@@ -766,8 +820,22 @@ export default function Home() {
       });
       addChatMessage({
         role: "assistant",
-        content: "收到模特图。生成时如需要人物，我会让模特与床品自然互动并保持场景光影统一。",
-        actions: [{ type: "generate", label: "生成图片" }],
+        content: "收到模特图。生成时我会让模特与床品自然互动，并保持光影统一。",
+        actions: [
+          ...(chatSceneImage
+            ? []
+            : [
+                {
+                  type: "uploadScene",
+                  label: "上传场景图",
+                  description: "可选，用于锁定房间结构和风格",
+                } as ChatAction,
+              ]),
+          { type: "imageType", label: "商品主图", value: "main" },
+          { type: "imageType", label: "细节近景", value: "closeup" },
+          { type: "aspect", label: "3:4 竖版", value: "3:4" },
+          { type: "generate", label: "生成图片" },
+        ],
       });
     } catch (err: any) {
       addChatMessage({
@@ -790,6 +858,8 @@ export default function Home() {
     const activeImageType = settingsOverride?.imageType ?? chatImageType;
     const activeGenerationCount =
       settingsOverride?.generationCount ?? chatGenerationCount;
+    const activeTypeLabel =
+      activeImageType === "closeup" ? "细节近景图" : "商品主图";
 
     if (!activeBrief && chatImages.length === 0 && !chatSceneImage && !chatModelImage) {
       addChatMessage({
@@ -811,7 +881,14 @@ export default function Home() {
       content: "生成卡片",
       generation: {
         status: "loading",
-        note: "正在调用图像模型生成，请稍候...",
+        title: "AI 对话生图生成中",
+        aspectRatio: activeAspectRatio,
+        imageType: activeImageType,
+        style: activeStyle,
+        count: activeGenerationCount,
+        hasScene: !!chatSceneImage,
+        hasModel: !!chatModelImage,
+        note: "正在解析商品材质、构图和参考图，请稍候...",
       },
     });
 
@@ -855,7 +932,13 @@ export default function Home() {
         generation: {
           status: "success",
           images: generatedList,
+          title: `已生成${activeTypeLabel}`,
           aspectRatio: activeAspectRatio,
+          imageType: activeImageType,
+          style: activeStyle,
+          count: activeGenerationCount,
+          hasScene: !!chatSceneImage,
+          hasModel: !!chatModelImage,
           note: partialError
             ? `部分生成失败：${partialError.message || "未知错误"}，成功图片已保留。`
             : "图片已生成在对话中。",
@@ -934,15 +1017,20 @@ export default function Home() {
       return;
     }
     if (action.type === "imageType" && action.value) {
-      setChatImageType(action.value as ImageType);
+      const nextType = action.value as ImageType;
+      setChatImageType(nextType);
+      setChatStage(chatImages.length > 0 ? "optionalRefs" : "uploadProduct");
       addChatMessage({
         role: "user",
-        content: `选择生成类型：${action.value === "main" ? "电商主图" : "细节近景"}`,
+        content: `选择生成类型：${nextType === "main" ? "商品主图" : "细节近景"}`,
       });
       addChatMessage({
         role: "assistant",
-        content: "生成类型已更新。",
-        actions: [{ type: "generate", label: "生成图片" }],
+        content:
+          nextType === "main"
+            ? "已切换为商品主图。可以上传商品图，也可以补充场景、模特或文字要求。"
+            : "已切换为细节近景。生成时会更强调面料纹理、花型和做工细节。",
+        actions: chatImages.length > 0 ? getOptionalReferenceActions() : getTypeSelectedActions(),
       });
       return;
     }
@@ -973,11 +1061,13 @@ export default function Home() {
     };
     const nextSettings = inferChatSettingsFromText(text, currentSettings);
     const parameterActions = getParameterActionsForText(text);
-    const shouldGenerate =
+    const explicitGenerate =
       /生成|出图|做图|做一张|来一张|画一张|开始|generate|create/i.test(text);
+    const shouldGenerate = explicitGenerate;
     const isParameterOnlyRequest =
       !shouldGenerate &&
       parameterActions.length > 0 &&
+      !/上传|补充|传/.test(text) &&
       !/卧室|床品|家纺|四件套|被套|枕套|面料|颜色|图案|花纹|清晨|自然光|质感|场景/.test(text);
     const uploadActions: ChatAction[] = [];
 
@@ -1039,14 +1129,7 @@ export default function Home() {
         chatImages.length > 0
           ? "我已把这句作为补充要求。你可以继续说，也可以现在生成。"
           : "我已记下你的画面要求。可以继续补充，也可以直接按文字生成。",
-      actions: [
-        { type: "generate", label: "生成图片" },
-        ...(chatImages.length === 0
-          ? [{ type: "uploadProduct", label: "上传商品图" } as ChatAction]
-          : []),
-        { type: "uploadScene", label: "上传场景图" },
-        { type: "aspect", label: "1:1 方图", value: "1:1" },
-      ],
+      actions: chatImages.length > 0 ? getReadyToGenerateActions() : getChatGenerationActions(),
     });
   };
 
@@ -1814,15 +1897,73 @@ export default function Home() {
                           {message.generation && (
                             <div className="mt-3 w-full rounded-[24px] bg-white border border-[#1a1a1a]/10 p-4 shadow-[0_8px_24px_rgb(0,0,0,0.04)]">
                               {message.generation.status === "loading" && (
-                                <div className="flex items-center gap-4">
-                                  <div className="w-16 h-20 rounded-2xl bg-[#f5f2ed] flex items-center justify-center">
-                                    <Loader2 className="w-6 h-6 animate-spin text-[#1a1a1a]/50" />
+                                <div className="space-y-5">
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-10 h-10 rounded-full bg-[#f5f2ed] flex items-center justify-center">
+                                        <Loader2 className="w-5 h-5 animate-spin text-[#1a1a1a]/60" />
+                                      </div>
+                                      <div>
+                                        <p className="font-semibold">
+                                          {message.generation.title || "AI 对话生图生成中"}
+                                          <span className="ml-2 text-[11px] uppercase tracking-widest text-[#1a1a1a]/45">
+                                            Creating
+                                          </span>
+                                        </p>
+                                        <p className="text-xs text-[#1a1a1a]/50">
+                                          {message.generation.imageType === "closeup"
+                                            ? "细节近景图"
+                                            : "商品主图"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span className="rounded-full bg-[#f5f2ed] px-3 py-1.5 text-xs text-[#1a1a1a]/60">
+                                      光影渲染中
+                                    </span>
                                   </div>
+
+                                  <div className="rounded-2xl bg-[#faf8f4] border border-[#1a1a1a]/5 p-4 grid grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
+                                        渲染画幅
+                                      </p>
+                                      <p className="font-semibold">
+                                        {message.generation.aspectRatio || chatAspectRatio}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
+                                        生成类型
+                                      </p>
+                                      <p className="font-semibold">
+                                        {message.generation.imageType === "closeup"
+                                          ? "细节近景"
+                                          : "电商主图"}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
+                                        模特参考
+                                      </p>
+                                      <p className="font-semibold">
+                                        {message.generation.hasModel ? "已上传" : "未使用"}
+                                      </p>
+                                    </div>
+                                    <div>
+                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
+                                        场景参考
+                                      </p>
+                                      <p className="font-semibold">
+                                        {message.generation.hasScene ? "已上传" : "默认生成"}
+                                      </p>
+                                    </div>
+                                  </div>
+
                                   <div>
-                                    <p className="font-medium mb-1">
-                                      正在生成图片
-                                    </p>
-                                    <p className="text-sm text-[#1a1a1a]/55">
+                                    <div className="h-1.5 w-full rounded-full bg-[#1a1a1a]/8 overflow-hidden">
+                                      <div className="h-full w-1/2 rounded-full bg-[#1a1a1a] animate-pulse"></div>
+                                    </div>
+                                    <p className="mt-3 text-sm text-[#1a1a1a]/55">
                                       {message.generation.note}
                                     </p>
                                   </div>

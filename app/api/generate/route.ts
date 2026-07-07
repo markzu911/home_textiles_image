@@ -15,6 +15,13 @@ function getSaasUrl(saasInfo: any, specificUrl: string, defaultPath: string) {
 
 export async function POST(req: Request) {
   try {
+    let payload: any;
+    try {
+      payload = await req.json();
+    } catch {
+      return NextResponse.json({ error: "请求体格式错误" }, { status: 400 });
+    }
+
     const { 
       model: genModel, 
       prompt, 
@@ -23,7 +30,7 @@ export async function POST(req: Request) {
       modelImage, 
       aspectRatio, 
       saasInfo
-    } = await req.json();
+    } = payload;
 
     const apiKey = process.env.GEMINI_API_KEY;
 

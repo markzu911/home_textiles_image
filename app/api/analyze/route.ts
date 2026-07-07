@@ -19,7 +19,14 @@ export async function POST(req: Request) {
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const prompt = "作为专业的家纺电商视觉总监，请分析这些家纺四件套的图片，提取出详细的商品特征。请按照要求的格式返回。";
+    const prompt = `作为专业的家纺电商视觉总监，请分析这些家纺四件套商品图，提取用于后续 AI 生图 100% 还原商品样式的关键特征。
+请不要泛泛描述“高级、温馨、柔软”，要尽量写清楚可被图像模型复现的视觉事实：
+- 面料材质、厚薄、蓬松度、光泽、纹理颗粒和褶皱状态
+- 主色、辅色、明暗层次、色温和饱和度
+- 花型/图案的具体类型、大小、密度、排列方向、边界和分布位置
+- 包边、花边、刺绣、走线、纽扣、拉链、拼接、压线等工艺细节
+- 床品四件套包含的可见部件及摆放方式
+返回内容要服务于“商品原图最高优先级还原”，不要把背景、房间风格误写成商品本身风格。请按照要求的 JSON 格式返回。`;
       
     const parts: any[] = images.map((base64: string) => {
       const [prefix, data] = base64.split(",");
@@ -42,11 +49,11 @@ export async function POST(req: Request) {
                 type: Type.OBJECT,
                 properties: {
                   material: { type: Type.STRING, description: "材质" },
-                  color: { type: Type.STRING, description: "颜色" },
-                  pattern: { type: Type.STRING, description: "图案" },
-                  style: { type: Type.STRING, description: "整体风格" },
-                  details: { type: Type.STRING, description: "细节设计(花边、刺绣等)" },
-                  sellingPoint: { type: Type.STRING, description: "核心卖点" }
+                  color: { type: Type.STRING, description: "商品主色、辅色、色温、饱和度和明暗层次" },
+                  pattern: { type: Type.STRING, description: "商品花型/图案的类型、大小、密度、排列方向和分布位置" },
+                  style: { type: Type.STRING, description: "适合该商品的家纺电商视觉风格，不要把背景误判为商品样式" },
+                  details: { type: Type.STRING, description: "商品细节设计，包括花边、包边、刺绣、走线、拼接、纽扣、拉链、褶皱和可见部件" },
+                  sellingPoint: { type: Type.STRING, description: "基于商品真实视觉特征提炼的核心卖点" }
                 },
                 required: ["material", "color", "pattern", "style", "details", "sellingPoint"]
               }

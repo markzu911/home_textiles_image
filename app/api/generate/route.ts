@@ -43,6 +43,17 @@ async function fetchWithTimeout(
   }
 }
 
+function appendInlineImagePart(parts: any[], label: string, image: unknown) {
+  if (typeof image !== "string" || !image.includes(",")) return;
+
+  const [prefix, data] = image.split(",");
+  if (!data) return;
+
+  const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
+  parts.push({ text: label });
+  parts.push({ inlineData: { data, mimeType } });
+}
+
 export async function POST(req: Request) {
   try {
     let payload: any;
@@ -101,24 +112,25 @@ export async function POST(req: Request) {
 
     const parts: any[] = [];
     const sourceImages = Array.isArray(images) ? images.filter(Boolean) : [];
-    for (const image of sourceImages) {
-      const [prefix, data] = image.split(",");
-      if (!data) continue;
-      const mimeType = prefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-      parts.push({ inlineData: { data, mimeType } });
-    }
+    sourceImages.forEach((image, index) => {
+      appendInlineImagePart(
+        parts,
+        `【商品原图 ${index + 1}】最高优先级参考图：必须严格还原这张图里的家纺商品样式、花型、颜色、材质纹理和细节设计。`,
+        image
+      );
+    });
 
-    if (sceneImage) {
-      const [sPrefix, sData] = sceneImage.split(",");
-      const sMimeType = sPrefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-      parts.push({ inlineData: { data: sData, mimeType: sMimeType } });
-    }
+    appendInlineImagePart(
+      parts,
+      "【场景/空间参考图】仅用于参考空间结构、家具、背景、光影和氛围；不要使用这张图里的床品款式替换商品原图。",
+      sceneImage
+    );
 
-    if (modelImage) {
-      const [mPrefix, mData] = modelImage.split(",");
-      const mMimeType = mPrefix.match(/:(.*?);/)?.[1] || "image/jpeg";
-      parts.push({ inlineData: { data: mData, mimeType: mMimeType } });
-    }
+    appendInlineImagePart(
+      parts,
+      "【模特参考图】仅用于参考人物面容、身材比例和真人质感；不要使用这张图改变商品原有样式。",
+      modelImage
+    );
 
     parts.push({ text: prompt });
 

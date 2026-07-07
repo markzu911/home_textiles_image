@@ -645,6 +645,196 @@ const requestGeneratedImage = async ({
   }
 };
 
+function ChatGenerationLoadingCard({ generation }: { generation: ChatGeneration }) {
+  const [progress, setProgress] = useState(8);
+  const imageTypeLabel = generation.imageType === "closeup" ? "细节近景" : "商品主图";
+  const steps =
+    generation.imageType === "closeup"
+      ? [
+          "解析面料纹理、花型边界和刺绣走线...",
+          "构建微距镜头景深与褶皱层次...",
+          "融合商品参考图、场景光影和材质触感...",
+          "执行电商级清晰度校准与细节锐化...",
+        ]
+      : [
+          "解析床品材质、花型和整体轮廓...",
+          "构建卧室空间构图与商品摆放关系...",
+          "融合参考图、自然光影和家居氛围...",
+          "执行电商主图级质感渲染与色彩校准...",
+        ];
+  const currentStep = progress < 28 ? 0 : progress < 58 ? 1 : progress < 84 ? 2 : 3;
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setProgress((value) => {
+        if (value < 28) return Math.min(28, value + Math.floor(Math.random() * 5) + 2);
+        if (value < 58) return Math.min(58, value + Math.floor(Math.random() * 4) + 1);
+        if (value < 84) return Math.min(84, value + Math.floor(Math.random() * 3) + 1);
+        if (value < 97) return Math.min(97, value + 0.6);
+        return value;
+      });
+    }, 520);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="mt-3 w-full max-w-[34rem] rounded-[28px] border border-[#1a1a1a]/8 bg-white p-5 shadow-[0_14px_36px_rgb(0,0,0,0.06)] space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-full bg-[#f5f2ed] flex items-center justify-center text-[#1a1a1a]/65 shrink-0">
+            <Loader2 className="w-5 h-5 animate-spin" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-[#1a1a1a] leading-tight">
+              {generation.title || "AI 对话生图生成中"}
+              <span className="ml-2 text-[10px] uppercase tracking-[0.18em] text-[#1a1a1a]/38">
+                Creating
+              </span>
+            </p>
+            <p className="text-xs text-[#1a1a1a]/45 mt-1">{imageTypeLabel}</p>
+          </div>
+        </div>
+        <span className="rounded-full bg-[#f5f2ed] px-3 py-1.5 text-xs font-medium text-[#1a1a1a]/55 shrink-0">
+          光影渲染中
+        </span>
+      </div>
+
+      <div className="rounded-2xl bg-[#faf8f4] border border-[#1a1a1a]/6 p-4 grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <p className="text-[11px] text-[#1a1a1a]/40 mb-1">渲染画幅</p>
+          <p className="font-semibold">{generation.aspectRatio || DEFAULT_ASPECT_RATIO}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-[#1a1a1a]/40 mb-1">生成类型</p>
+          <p className="font-semibold">{imageTypeLabel}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-[#1a1a1a]/40 mb-1">模特参考</p>
+          <p className="font-semibold">{generation.hasModel ? "已上传" : "未使用"}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-[#1a1a1a]/40 mb-1">场景参考</p>
+          <p className="font-semibold">{generation.hasScene ? "已上传" : "默认生成"}</p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[11px] font-medium">
+          <span className="text-[#1a1a1a]/45">整体渲染进度</span>
+          <span className="text-[#1a1a1a]">{Math.floor(progress)}%</span>
+        </div>
+        <div className="h-1.5 w-full rounded-full bg-[#1a1a1a]/8 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-[#1a1a1a] transition-all duration-300 ease-out"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="space-y-2 pt-1">
+          {steps.map((stepText, stepIndex) => {
+            const isCompleted = stepIndex < currentStep;
+            const isActive = stepIndex === currentStep;
+            return (
+              <div key={stepText} className="flex items-start gap-2 text-xs">
+                <span className="mt-0.5 w-4 h-4 rounded-full border border-[#1a1a1a]/15 flex items-center justify-center shrink-0">
+                  {isCompleted ? (
+                    <Check className="w-3 h-3 text-[#1a1a1a]/70" />
+                  ) : isActive ? (
+                    <span className="w-2 h-2 rounded-full bg-[#1a1a1a] animate-pulse" />
+                  ) : null}
+                </span>
+                <span
+                  className={
+                    isCompleted
+                      ? "text-[#1a1a1a]/38 line-through"
+                      : isActive
+                        ? "text-[#1a1a1a] font-medium"
+                        : "text-[#1a1a1a]/42"
+                  }
+                >
+                  {stepText}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {generation.note && (
+          <p className="text-xs text-[#1a1a1a]/50 pt-1">{generation.note}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChatGenerationResultCard({
+  generation,
+  fallbackAspectRatio,
+  onPreview,
+}: {
+  generation: ChatGeneration;
+  fallbackAspectRatio: string;
+  onPreview: (images: string[], index: number) => void;
+}) {
+  const images = generation.images || [];
+  const imageTypeLabel = generation.imageType === "closeup" ? "细节近景" : "商品主图";
+
+  return (
+    <div className="mt-3 w-full max-w-[34rem] rounded-[28px] border border-[#1a1a1a]/8 bg-white p-5 shadow-[0_14px_36px_rgb(0,0,0,0.06)] space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold text-[#1a1a1a]">生成结果</p>
+          <p className="text-xs text-[#1a1a1a]/45 mt-1">
+            {generation.note || "图片已生成在对话中。"}
+          </p>
+        </div>
+        <span className="rounded-full bg-[#f5f2ed] px-3 py-1.5 text-[11px] font-medium text-[#1a1a1a]/55 shrink-0">
+          {imageTypeLabel}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {images.map((img, idx) => (
+          <div key={`${img}-${idx}`} className="space-y-3">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => onPreview(images, idx)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onPreview(images, idx);
+                }
+              }}
+              className={`relative ${getAspectClassName(generation.aspectRatio || fallbackAspectRatio)} rounded-[20px] overflow-hidden bg-[#f5f2ed] border border-[#1a1a1a]/10 cursor-zoom-in group`}
+              title="预览生成图"
+            >
+              <Image
+                src={img}
+                alt={`Generated chat result ${idx + 1}`}
+                fill
+                className="object-cover transition-transform duration-500 group-hover:scale-[1.02]"
+                unoptimized
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/18 transition-colors flex items-center justify-center">
+                <span className="rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-[#1a1a1a] opacity-0 group-hover:opacity-100 transition-opacity">
+                  点击预览高清图
+                </span>
+              </div>
+            </div>
+            <a
+              href={img}
+              download={`chat-generated-${idx + 1}.png`}
+              className="w-full border border-[#1a1a1a]/15 text-[#1a1a1a] px-4 py-2.5 rounded-full text-sm font-medium hover:bg-[#f5f2ed] transition-colors flex items-center justify-center gap-2"
+            >
+              <Download className="w-4 h-4" /> 下载
+            </a>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("HOME");
   const [step, setStep] = useState<Step>("UPLOAD");
@@ -2322,141 +2512,23 @@ export default function Home() {
                           )}
 
                           {message.generation && (
-                            <div className="mt-3 w-full rounded-[24px] bg-white border border-[#1a1a1a]/10 p-4 shadow-[0_8px_24px_rgb(0,0,0,0.04)]">
+                            <>
                               {message.generation.status === "loading" && (
-                                <div className="space-y-5">
-                                  <div className="flex items-start justify-between gap-4">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-10 h-10 rounded-full bg-[#f5f2ed] flex items-center justify-center">
-                                        <Loader2 className="w-5 h-5 animate-spin text-[#1a1a1a]/60" />
-                                      </div>
-                                      <div>
-                                        <p className="font-semibold">
-                                          {message.generation.title || "AI 对话生图生成中"}
-                                          <span className="ml-2 text-[11px] uppercase tracking-widest text-[#1a1a1a]/45">
-                                            Creating
-                                          </span>
-                                        </p>
-                                        <p className="text-xs text-[#1a1a1a]/50">
-                                          {message.generation.imageType === "closeup"
-                                            ? "细节近景图"
-                                            : "商品主图"}
-                                        </p>
-                                      </div>
-                                    </div>
-                                    <span className="rounded-full bg-[#f5f2ed] px-3 py-1.5 text-xs text-[#1a1a1a]/60">
-                                      光影渲染中
-                                    </span>
-                                  </div>
-
-                                  <div className="rounded-2xl bg-[#faf8f4] border border-[#1a1a1a]/5 p-4 grid grid-cols-2 gap-4 text-sm">
-                                    <div>
-                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
-                                        渲染画幅
-                                      </p>
-                                      <p className="font-semibold">
-                                        {message.generation.aspectRatio || chatAspectRatio}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
-                                        生成类型
-                                      </p>
-                                      <p className="font-semibold">
-                                        {message.generation.imageType === "closeup"
-                                          ? "细节近景"
-                                          : "电商主图"}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
-                                        模特参考
-                                      </p>
-                                      <p className="font-semibold">
-                                        {message.generation.hasModel ? "已上传" : "未使用"}
-                                      </p>
-                                    </div>
-                                    <div>
-                                      <p className="text-[11px] text-[#1a1a1a]/45 mb-1">
-                                        场景参考
-                                      </p>
-                                      <p className="font-semibold">
-                                        {message.generation.hasScene ? "已上传" : "默认生成"}
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <div>
-                                    <div className="h-1.5 w-full rounded-full bg-[#1a1a1a]/8 overflow-hidden">
-                                      <div className="h-full w-1/2 rounded-full bg-[#1a1a1a] animate-pulse"></div>
-                                    </div>
-                                    <p className="mt-3 text-sm text-[#1a1a1a]/55">
-                                      {message.generation.note}
-                                    </p>
-                                  </div>
-                                </div>
+                                <ChatGenerationLoadingCard generation={message.generation} />
                               )}
-
                               {message.generation.status === "error" && (
-                                <div className="p-4 rounded-2xl bg-red-50 text-red-600 text-sm">
+                                <div className="mt-3 w-full max-w-[34rem] rounded-[24px] border border-red-100 bg-red-50 p-4 text-sm text-red-600">
                                   {message.generation.error}
                                 </div>
                               )}
-
                               {message.generation.status === "success" && (
-                                <div className="space-y-4">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <div>
-                                      <p className="font-medium">生成结果</p>
-                                      <p className="text-xs text-[#1a1a1a]/50">
-                                        {message.generation.note}
-                                      </p>
-                                    </div>
-                                    <Wand2 className="w-5 h-5 text-[#1a1a1a]/50" />
-                                  </div>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    {message.generation.images?.map((img, idx) => (
-                                      <div key={`${message.id}-result-${idx}`} className="space-y-3">
-                                        <div
-                                          role="button"
-                                          tabIndex={0}
-                                          onClick={() => openImagePreview(message.generation?.images || [], idx)}
-                                          onKeyDown={(e) => {
-                                            if (e.key === "Enter" || e.key === " ") {
-                                              e.preventDefault();
-                                              openImagePreview(message.generation?.images || [], idx);
-                                            }
-                                          }}
-                                          className={`relative ${getAspectClassName(message.generation?.aspectRatio || chatAspectRatio)} rounded-[20px] overflow-hidden bg-[#f5f2ed] border border-[#1a1a1a]/10 cursor-zoom-in group`}
-                                          title="预览生成图"
-                                        >
-                                          <Image
-                                            src={img}
-                                            alt={`Generated chat result ${idx + 1}`}
-                                            fill
-                                            className="object-cover"
-                                            unoptimized
-                                            referrerPolicy="no-referrer"
-                                          />
-                                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                                            <span className="rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-[#1a1a1a] opacity-0 group-hover:opacity-100 transition-opacity">
-                                              点击预览
-                                            </span>
-                                          </div>
-                                        </div>
-                                        <a
-                                          href={img}
-                                          download={`chat-generated-${idx + 1}.png`}
-                                          className="w-full border border-[#1a1a1a]/15 text-[#1a1a1a] px-4 py-2.5 rounded-full text-sm font-medium hover:bg-[#f5f2ed] transition-colors flex items-center justify-center gap-2"
-                                        >
-                                          <Download className="w-4 h-4" /> 下载
-                                        </a>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
+                                <ChatGenerationResultCard
+                                  generation={message.generation}
+                                  fallbackAspectRatio={chatAspectRatio}
+                                  onPreview={openImagePreview}
+                                />
                               )}
-                            </div>
+                            </>
                           )}
 
                           {shouldShowActions && message.actions && (

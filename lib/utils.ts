@@ -66,8 +66,14 @@ export async function compressImage(
             continue;
           }
 
-          const scaledWidth = Math.max(640, Math.round(currentCanvas.width * 0.86));
-          const scaledHeight = Math.max(640, Math.round(currentCanvas.height * 0.86));
+          const longestSide = Math.max(currentCanvas.width, currentCanvas.height);
+          if (longestSide <= 640) {
+            break;
+          }
+
+          const scale = Math.max(640 / longestSide, 0.86);
+          const scaledWidth = Math.max(1, Math.round(currentCanvas.width * scale));
+          const scaledHeight = Math.max(1, Math.round(currentCanvas.height * scale));
           if (scaledWidth === currentCanvas.width && scaledHeight === currentCanvas.height) {
             break;
           }

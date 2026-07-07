@@ -169,13 +169,14 @@ const IMAGE_TYPE_OPTIONS = [
 ];
 
 const CHAT_WELCOME_ACTIONS: ChatAction[] = [
-  { type: "imageType", label: "生成商品主图", value: "main", description: "整体视觉效果和电商首图" },
-  { type: "imageType", label: "生成细节近景", value: "closeup", description: "面料纹理、做工和花型特写" },
-  { type: "uploadProduct", label: "上传商品图", description: "用于还原花型、颜色、材质和细节" },
-  { type: "uploadScene", label: "上传自定义场景", description: "可选，复刻房间结构、家具和光影" },
-  { type: "uploadModel", label: "上传模特图", description: "可选，生成真人互动场景" },
-  { type: "style", label: "现代轻奢风", value: PRESET_STYLES[2] },
+  { type: "uploadProduct", label: "上传商品图", description: "先识别花型、颜色和材质" },
+  { type: "imageType", label: "商品主图", value: "main", description: "整体场景和电商首图" },
+  { type: "imageType", label: "细节近景", value: "closeup", description: "面料纹理、刺绣和做工" },
+  { type: "uploadScene", label: "场景参考", description: "可选，锁定卧室结构和光影" },
 ];
+
+const CHAT_WELCOME_CONTENT =
+  "直接描述你想要的家纺画面，或先上传商品、场景、模特参考图。我会帮你整理需求，生成商品主图或细节近景。";
 
 const getChatId = () => {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -261,10 +262,10 @@ const getSettingsFromChatIntent = (
 };
 
 const serializeChatMessagesForApi = (messages: ChatMessage[]) => {
-  return messages.map((message) => ({
+  return messages.map((message, index) => ({
     role: message.role,
     content: message.content || "",
-    images: message.images || [],
+    images: index === messages.length - 1 ? message.images || [] : [],
   }));
 };
 
@@ -540,8 +541,7 @@ export default function Home() {
     {
       id: "welcome",
       role: "assistant",
-      content:
-        "AI 对话生图沿用常规生图逻辑：可以生成商品主图或细节近景，也可以上传商品图、自定义场景图或模特图，再用文字补充要求。",
+      content: CHAT_WELCOME_CONTENT,
       actions: CHAT_WELCOME_ACTIONS,
     },
   ]);
@@ -558,6 +558,7 @@ export default function Home() {
   const [chatGenerationCount, setChatGenerationCount] = useState<number>(1);
   const [chatGeneratedImages, setChatGeneratedImages] = useState<string[]>([]);
   const [chatIsBusy, setChatIsBusy] = useState(false);
+  const [isChatUploadMenuOpen, setIsChatUploadMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sceneInputRef = useRef<HTMLInputElement>(null);
   const modelInputRef = useRef<HTMLInputElement>(null);
@@ -747,8 +748,7 @@ export default function Home() {
       {
         id: getChatId(),
         role: "assistant",
-        content:
-          "AI 对话生图沿用常规生图逻辑：可以生成商品主图或细节近景，也可以上传商品图、自定义场景图或模特图，再用文字补充要求。",
+        content: CHAT_WELCOME_CONTENT,
         actions: CHAT_WELCOME_ACTIONS,
       },
     ]);
@@ -765,6 +765,7 @@ export default function Home() {
     setChatGenerationCount(1);
     setChatGeneratedImages([]);
     setChatIsBusy(false);
+    setIsChatUploadMenuOpen(false);
   };
 
   const addChatMessage = (message: Omit<ChatMessage, "id">) => {
@@ -846,7 +847,6 @@ export default function Home() {
         content: `已上传 ${compressedImages.length} 张商品参考图`,
         images: compressedImages,
       });
-      setChatIsBusy(false);
       await runChatAnalysis(nextImages);
     } catch (err: any) {
       setChatIsBusy(false);
@@ -1070,7 +1070,7 @@ export default function Home() {
   };
 
   const handleChatAction = async (action: ChatAction) => {
-    if (chatIsBusy && action.type !== "uploadProduct" && action.type !== "uploadScene" && action.type !== "uploadModel") {
+    if (chatIsBusy) {
       return;
     }
 
@@ -1243,6 +1243,7 @@ export default function Home() {
     let handedOffToGeneration = false;
 
     setChatInput("");
+    setIsChatUploadMenuOpen(false);
     setChatIsBusy(true);
     setChatMessages((prev) => [...prev, userMessage, assistantMessage]);
 
@@ -1290,6 +1291,12 @@ export default function Home() {
       }
 
       accumulatedText += decoder.decode();
+      const streamErrorIndex = accumulatedText.indexOf("[ERROR]");
+      if (streamErrorIndex >= 0) {
+        const streamError = accumulatedText.slice(streamErrorIndex + "[ERROR]".length).trim();
+        throw new Error(streamError || "AI 对话解析中断，请重试。");
+      }
+
       const intent = parseChatIntentAction(accumulatedText);
       const reply = extractChatReply(accumulatedText) || "我已理解你的需求。";
       const nextSettings = getSettingsFromChatIntent(intent, text, currentSettings);
@@ -2053,8 +2060,9 @@ export default function Home() {
                   ref={chatScrollRef}
                   className="flex-1 overflow-y-auto p-5 md:p-6 space-y-6 bg-[#faf8f4]"
                 >
-                  {chatMessages.map((message) => {
+                  {chatMessages.map((message, index) => {
                     const isUser = message.role === "user";
+                    const isWelcomeActions = !isUser && index === 0;
 
                     return (
                       <div
@@ -2232,24 +2240,62 @@ export default function Home() {
                           )}
 
                           {message.actions && message.actions.length > 0 && (
-                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
+                            <div
+                              className={
+                                isWelcomeActions
+                                  ? "mt-3 w-full rounded-2xl border border-[#1a1a1a]/8 bg-white/75 p-3 shadow-[0_8px_22px_rgb(0,0,0,0.035)]"
+                                  : "mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full"
+                              }
+                            >
+                              {isWelcomeActions && (
+                                <div className="mb-2.5 flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2">
+                                    <Wand2 className="w-3.5 h-3.5 text-[#1a1a1a]/55" />
+                                    <span className="text-[11px] font-semibold text-[#1a1a1a]/60">
+                                      快捷入口
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] text-[#1a1a1a]/38">
+                                    也可以直接打字描述
+                                  </span>
+                                </div>
+                              )}
+                              <div className={isWelcomeActions ? "grid grid-cols-2 gap-2" : "contents"}>
                               {message.actions.map((action, idx) => (
                                 <button
                                   key={`${message.id}-${action.type}-${action.value || idx}`}
                                   onClick={() => handleChatAction(action)}
-                                  disabled={chatIsBusy && action.type !== "uploadProduct" && action.type !== "uploadScene" && action.type !== "uploadModel"}
-                                  className="text-left rounded-2xl border border-[#1a1a1a]/10 bg-white px-4 py-3 hover:border-[#1a1a1a]/30 hover:bg-[#f5f2ed]/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  disabled={chatIsBusy}
+                                  className={
+                                    isWelcomeActions
+                                      ? "min-h-[4.25rem] text-left rounded-xl border border-[#1a1a1a]/8 bg-white px-3 py-2.5 hover:border-[#1a1a1a]/25 hover:bg-[#f5f2ed]/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                      : "text-left rounded-2xl border border-[#1a1a1a]/10 bg-white px-4 py-3 hover:border-[#1a1a1a]/30 hover:bg-[#f5f2ed]/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                  }
                                 >
-                                  <span className="text-sm font-medium block">
-                                    {action.label}
-                                  </span>
-                                  {action.description && (
-                                    <span className="text-xs text-[#1a1a1a]/50 mt-1 block">
-                                      {action.description}
+                                  <span className={isWelcomeActions ? "flex items-start gap-2" : "block"}>
+                                    {isWelcomeActions && (
+                                      <span className="mt-0.5 w-7 h-7 rounded-full bg-[#f5f2ed] border border-[#1a1a1a]/6 flex items-center justify-center shrink-0">
+                                        {action.type === "uploadProduct" && <Images className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "uploadScene" && <ImageIcon className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "uploadModel" && <UserRound className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "imageType" && action.value === "main" && <Sparkles className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "imageType" && action.value === "closeup" && <ImageIcon className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                      </span>
+                                    )}
+                                    <span className="min-w-0">
+                                      <span className={isWelcomeActions ? "text-[13px] font-semibold block text-[#1a1a1a]" : "text-sm font-medium block"}>
+                                        {action.label}
+                                      </span>
+                                      {action.description && (
+                                        <span className={isWelcomeActions ? "text-[11px] leading-snug text-[#1a1a1a]/45 mt-0.5 block" : "text-xs text-[#1a1a1a]/50 mt-1 block"}>
+                                          {action.description}
+                                        </span>
+                                      )}
                                     </span>
-                                  )}
+                                  </span>
                                 </button>
                               ))}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -2268,35 +2314,71 @@ export default function Home() {
                   onSubmit={handleChatSubmit}
                   className="p-4 border-t border-[#1a1a1a]/10 bg-white flex items-end gap-3"
                 >
-                  <div className="flex items-center gap-2 pb-1">
+                  <div className="relative pb-1">
+                    <AnimatePresence>
+                      {isChatUploadMenuOpen && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                          transition={{ duration: 0.15 }}
+                          className="absolute bottom-full left-0 mb-3 w-48 overflow-hidden rounded-2xl border border-[#1a1a1a]/10 bg-white shadow-[0_18px_50px_rgb(0,0,0,0.12)] z-20"
+                        >
+                          <button
+                            type="button"
+                            disabled={chatIsBusy}
+                            onClick={() => {
+                              setIsChatUploadMenuOpen(false);
+                              chatProductInputRef.current?.click();
+                            }}
+                            className="w-full px-4 py-3 text-left text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f2ed] transition-colors flex items-center gap-3"
+                          >
+                            <Images className="w-4 h-4 text-[#1a1a1a]/65" />
+                            商品图
+                          </button>
+                          <button
+                            type="button"
+                            disabled={chatIsBusy}
+                            onClick={() => {
+                              setIsChatUploadMenuOpen(false);
+                              chatSceneInputRef.current?.click();
+                            }}
+                            className="w-full px-4 py-3 text-left text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f2ed] transition-colors flex items-center gap-3 border-t border-[#1a1a1a]/5"
+                          >
+                            <ImageIcon className="w-4 h-4 text-[#1a1a1a]/65" />
+                            场景图
+                          </button>
+                          <button
+                            type="button"
+                            disabled={chatIsBusy}
+                            onClick={() => {
+                              setIsChatUploadMenuOpen(false);
+                              chatModelInputRef.current?.click();
+                            }}
+                            className="w-full px-4 py-3 text-left text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f2ed] transition-colors flex items-center gap-3 border-t border-[#1a1a1a]/5"
+                          >
+                            <UserRound className="w-4 h-4 text-[#1a1a1a]/65" />
+                            模特图
+                          </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                     <button
                       type="button"
-                      onClick={() => chatProductInputRef.current?.click()}
+                      onClick={() => setIsChatUploadMenuOpen((open) => !open)}
+                      disabled={chatIsBusy}
                       className="w-10 h-10 rounded-full border border-[#1a1a1a]/10 flex items-center justify-center hover:bg-[#f5f2ed] transition-colors"
-                      title="上传商品图"
+                      title="上传参考图"
+                      aria-label="上传参考图"
+                      aria-expanded={isChatUploadMenuOpen}
                     >
-                      <Images className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => chatSceneInputRef.current?.click()}
-                      className="w-10 h-10 rounded-full border border-[#1a1a1a]/10 flex items-center justify-center hover:bg-[#f5f2ed] transition-colors"
-                      title="上传场景图"
-                    >
-                      <ImageIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => chatModelInputRef.current?.click()}
-                      className="w-10 h-10 rounded-full border border-[#1a1a1a]/10 flex items-center justify-center hover:bg-[#f5f2ed] transition-colors"
-                      title="上传模特图"
-                    >
-                      <UserRound className="w-4 h-4" />
+                      <Upload className="w-4 h-4" />
                     </button>
                   </div>
                   <textarea
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
+                    onFocus={() => setIsChatUploadMenuOpen(false)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
                         e.preventDefault();

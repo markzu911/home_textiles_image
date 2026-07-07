@@ -654,6 +654,8 @@ export default function Home() {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [previewImageIndex, setPreviewImageIndex] = useState(0);
   const [genModel, setGenModel] = useState(DEFAULT_GEN_MODEL);
   const [aspectRatio, setAspectRatio] = useState(DEFAULT_ASPECT_RATIO);
   const [generationCount, setGenerationCount] = useState<number>(1);
@@ -699,6 +701,25 @@ export default function Home() {
   const chatSceneInputRef = useRef<HTMLInputElement>(null);
   const chatModelInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  const openImagePreview = (items: string[], index = 0) => {
+    if (items.length === 0) return;
+    setPreviewImages(items);
+    setPreviewImageIndex(Math.min(Math.max(index, 0), items.length - 1));
+    setIsLightboxOpen(true);
+  };
+
+  const closeImagePreview = () => {
+    setIsLightboxOpen(false);
+  };
+
+  const showPreviousPreview = () => {
+    setPreviewImageIndex((prev) => (prev <= 0 ? previewImages.length - 1 : prev - 1));
+  };
+
+  const showNextPreview = () => {
+    setPreviewImageIndex((prev) => (prev >= previewImages.length - 1 ? 0 : prev + 1));
+  };
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -1761,7 +1782,17 @@ export default function Home() {
                       {images.map((img, idx) => (
                         <div
                           key={idx}
-                          className="relative w-24 h-24 flex-shrink-0 rounded-2xl overflow-hidden group border border-[#1a1a1a]/10"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openImagePreview(images, idx)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openImagePreview(images, idx);
+                            }
+                          }}
+                          className="relative w-24 h-24 flex-shrink-0 rounded-2xl overflow-hidden group border border-[#1a1a1a]/10 cursor-zoom-in"
+                          title="预览图片"
                         >
                           <Image
                             src={img}
@@ -1772,11 +1803,19 @@ export default function Home() {
                             referrerPolicy="no-referrer"
                           />
                           <button
-                            onClick={() => removeImage(idx)}
-                            className="absolute inset-0 bg-black/40 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeImage(idx);
+                            }}
+                            className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full bg-black/55 text-white opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                            title="移除图片"
                           >
-                            移除
+                            <X className="w-3.5 h-3.5" />
                           </button>
+                          <span className="absolute inset-x-0 bottom-0 bg-black/45 py-1 text-[11px] text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                            预览
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -2065,7 +2104,7 @@ export default function Home() {
                   <div className="flex-1 flex flex-col gap-4">
                     <div
                       className={`relative ${aspectRatio === "1:1" ? "aspect-square" : aspectRatio === "4:3" ? "aspect-[4/3]" : aspectRatio === "16:9" ? "aspect-video" : "aspect-[3/4]"} w-full rounded-[24px] overflow-hidden shadow-2xl cursor-zoom-in group`}
-                      onClick={() => setIsLightboxOpen(true)}
+                      onClick={() => openImagePreview(generatedImages, selectedImageIndex)}
                     >
                       <Image
                         src={generatedImages[selectedImageIndex]}
@@ -2211,6 +2250,9 @@ export default function Home() {
                     const isWelcomeActions = !isUser && index === 0;
                     const isLatestAssistantActions =
                       !isUser && !isWelcomeActions && message.id === latestAssistantMessageId;
+                    const shouldShowActions =
+                      !!message.actions?.length &&
+                      ((isWelcomeActions && chatMessages.length === 1) || isLatestAssistantActions);
 
                     return (
                       <div
@@ -2249,7 +2291,17 @@ export default function Home() {
                               {message.images.map((img, idx) => (
                                 <div
                                   key={`${message.id}-${idx}`}
-                                  className="relative w-28 aspect-square rounded-2xl overflow-hidden border border-[#1a1a1a]/10 bg-white"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => openImagePreview(message.images || [], idx)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                      e.preventDefault();
+                                      openImagePreview(message.images || [], idx);
+                                    }
+                                  }}
+                                  className="relative w-28 aspect-square rounded-2xl overflow-hidden border border-[#1a1a1a]/10 bg-white cursor-zoom-in group"
+                                  title="预览图片"
                                 >
                                   <Image
                                     src={img}
@@ -2259,6 +2311,11 @@ export default function Home() {
                                     unoptimized
                                     referrerPolicy="no-referrer"
                                   />
+                                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/18 transition-colors flex items-center justify-center">
+                                    <span className="rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-[#1a1a1a] opacity-0 group-hover:opacity-100 transition-opacity">
+                                      预览
+                                    </span>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -2361,7 +2418,17 @@ export default function Home() {
                                     {message.generation.images?.map((img, idx) => (
                                       <div key={`${message.id}-result-${idx}`} className="space-y-3">
                                         <div
-                                          className={`relative ${getAspectClassName(message.generation?.aspectRatio || chatAspectRatio)} rounded-[20px] overflow-hidden bg-[#f5f2ed] border border-[#1a1a1a]/10`}
+                                          role="button"
+                                          tabIndex={0}
+                                          onClick={() => openImagePreview(message.generation?.images || [], idx)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter" || e.key === " ") {
+                                              e.preventDefault();
+                                              openImagePreview(message.generation?.images || [], idx);
+                                            }
+                                          }}
+                                          className={`relative ${getAspectClassName(message.generation?.aspectRatio || chatAspectRatio)} rounded-[20px] overflow-hidden bg-[#f5f2ed] border border-[#1a1a1a]/10 cursor-zoom-in group`}
+                                          title="预览生成图"
                                         >
                                           <Image
                                             src={img}
@@ -2371,6 +2438,11 @@ export default function Home() {
                                             unoptimized
                                             referrerPolicy="no-referrer"
                                           />
+                                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                                            <span className="rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-[#1a1a1a] opacity-0 group-hover:opacity-100 transition-opacity">
+                                              点击预览
+                                            </span>
+                                          </div>
                                         </div>
                                         <a
                                           href={img}
@@ -2387,7 +2459,7 @@ export default function Home() {
                             </div>
                           )}
 
-                          {message.actions && message.actions.length > 0 && (
+                          {shouldShowActions && message.actions && (
                             <div
                               className={
                                 isWelcomeActions
@@ -2577,27 +2649,67 @@ export default function Home() {
 
         {/* Lightbox */}
         <AnimatePresence>
-          {isLightboxOpen && generatedImages.length > 0 && (
+          {isLightboxOpen && previewImages.length > 0 && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 md:p-12"
-              onClick={() => setIsLightboxOpen(false)}
+              onClick={closeImagePreview}
             >
               <button
                 className="absolute top-6 right-6 text-white/70 hover:text-white transition-colors"
-                onClick={() => setIsLightboxOpen(false)}
+                onClick={closeImagePreview}
+                title="关闭预览"
               >
                 <X className="w-8 h-8" />
               </button>
+              {previewImages.length > 1 && (
+                <>
+                  <button
+                    className="absolute left-4 md:left-8 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white transition-colors flex items-center justify-center"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showPreviousPreview();
+                    }}
+                    title="上一张"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    className="absolute right-4 md:right-8 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-white transition-colors flex items-center justify-center"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      showNextPreview();
+                    }}
+                    title="下一张"
+                  >
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </>
+              )}
+              <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3">
+                {previewImages.length > 1 && (
+                  <span className="rounded-full bg-white/10 px-3 py-2 text-xs text-white/75">
+                    {previewImageIndex + 1} / {previewImages.length}
+                  </span>
+                )}
+                <a
+                  href={previewImages[previewImageIndex]}
+                  download={`preview-image-${previewImageIndex + 1}.png`}
+                  className="rounded-full bg-white text-[#1a1a1a] px-4 py-2 text-sm font-medium hover:bg-white/90 transition-colors flex items-center gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Download className="w-4 h-4" /> 下载
+                </a>
+              </div>
               <div
                 className="relative w-full h-full max-w-5xl"
                 onClick={(e) => e.stopPropagation()}
               >
                 <Image
-                  src={generatedImages[selectedImageIndex]}
-                  alt="Generated Product Image Fullscreen"
+                  src={previewImages[previewImageIndex]}
+                  alt="Preview Image Fullscreen"
                   fill
                   className="object-contain"
                   unoptimized

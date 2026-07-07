@@ -12,10 +12,10 @@ const getDataUrlByteSize = (dataUrl: string) => {
 
 export async function compressImage(
   file: File,
-  maxWidth = 1400,
-  maxHeight = 1400,
-  quality = 0.82,
-  maxBytes = 700 * 1024
+  maxWidth = 1024,
+  maxHeight = 1024,
+  quality = 0.78,
+  maxBytes = 420 * 1024
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -59,19 +59,19 @@ export async function compressImage(
         let currentQuality = quality;
         let dataUrl = currentCanvas.toDataURL("image/jpeg", currentQuality);
 
-        for (let attempt = 0; attempt < 10 && getDataUrlByteSize(dataUrl) > maxBytes; attempt++) {
-          if (currentQuality > 0.48) {
-            currentQuality = Math.max(0.48, currentQuality - 0.08);
+        for (let attempt = 0; attempt < 12 && getDataUrlByteSize(dataUrl) > maxBytes; attempt++) {
+          if (currentQuality > 0.42) {
+            currentQuality = Math.max(0.42, currentQuality - 0.08);
             dataUrl = currentCanvas.toDataURL("image/jpeg", currentQuality);
             continue;
           }
 
           const longestSide = Math.max(currentCanvas.width, currentCanvas.height);
-          if (longestSide <= 640) {
+          if (longestSide <= 512) {
             break;
           }
 
-          const scale = Math.max(640 / longestSide, 0.86);
+          const scale = Math.max(512 / longestSide, 0.84);
           const scaledWidth = Math.max(1, Math.round(currentCanvas.width * scale));
           const scaledHeight = Math.max(1, Math.round(currentCanvas.height * scale));
           if (scaledWidth === currentCanvas.width && scaledHeight === currentCanvas.height) {

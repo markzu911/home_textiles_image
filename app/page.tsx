@@ -38,6 +38,7 @@ type WorkspaceMode = "HOME" | "STANDARD" | "CHAT";
 type Step = "UPLOAD" | "ANALYZING" | "EDIT" | "GENERATING" | "RESULT";
 type ImageType = "main" | "closeup";
 type ChatStage = "chooseType" | "uploadProduct" | "optionalRefs" | "ready";
+type ChatImageCategory = "product" | "scene" | "model";
 type ChatActionType =
   | "uploadProduct"
   | "uploadScene"
@@ -80,7 +81,7 @@ interface ChatAction {
 }
 
 interface ChatGeneration {
-  status: "loading" | "success" | "error";
+  status: "loading" | "success" | "error" | "pending";
   images?: string[];
   error?: string;
   note?: string;
@@ -98,6 +99,7 @@ interface ChatMessage {
   role: "assistant" | "user";
   content?: string;
   images?: string[];
+  imageCategory?: ChatImageCategory;
   actions?: ChatAction[];
   generation?: ChatGeneration;
 }
@@ -150,6 +152,7 @@ interface ChatIntentAction {
 const DEFAULT_GEN_MODEL = "gemini-3.1-flash-image-preview";
 const DEFAULT_ASPECT_RATIO = "3:4";
 const GENERATE_REQUEST_TIMEOUT_MS = 300000;
+const MAX_PRODUCT_REFERENCE_IMAGES = 1;
 
 const PRESET_STYLES = [
   "极简原木风 (阳光、白墙、原木床架)",
@@ -570,15 +573,27 @@ ${modelImage ? "5. 【模特融入】：如出现人物，需参考【模特参�
 };
 
 const readJsonResponse = async (res: Response, fallbackPrefix: string) => {
+  if (res.status === 413) {
+    throw new Error("图片体积过大：已自动压缩，但当前参考图数量或尺寸仍超出服务端限制。请减少参考图后重试。");
+  }
+  if (res.status === 504) {
+    throw new Error("GENERATION_RESULT_PENDING: 当前请求被网关中断，后台可能已经生成并保存，请到生成记录中确认；如果记录中没有结果，再重新生成。");
+  }
   const contentType = res.headers.get("content-type");
   if (contentType && contentType.includes("application/json")) {
     return res.json();
   }
-  if (res.status === 413) {
-    throw new Error("图片体积过大：已自动压缩，但当前参考图数量或尺寸仍超出服务端限制。请减少参考图后重试。");
-  }
   await res.text();
   throw new Error(`${fallbackPrefix} (${res.status}): 请重试`);
+};
+
+const isGenerationResultPendingError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return (
+    /GENERATION_RESULT_PENDING|网关中断|504|生成请求超时/i.test(message) ||
+    (/执行后续流程失败/.test(message) &&
+      /(oss-upload|upload-commit|图片入库|OSS 上传).*?(timeout|aborted|超时)/i.test(message))
+  );
 };
 
 const getFriendlyChatErrorMessage = (error: unknown) => {
@@ -621,7 +636,7 @@ const requestGeneratedImage = async ({
       body: JSON.stringify({
         model,
         prompt,
-        images,
+        images: images.slice(-MAX_PRODUCT_REFERENCE_IMAGES),
         sceneImage,
         modelImage,
         aspectRatio,
@@ -761,6 +776,18 @@ function ChatGenerationLoadingCard({ generation }: { generation: ChatGeneration 
           <p className="text-xs text-[#1a1a1a]/50 pt-1">{generation.note}</p>
         )}
       </div>
+    </div>
+  );
+}
+
+function ChatGenerationPendingCard({ message }: { message?: string }) {
+  return (
+    <div className="mt-3 w-full max-w-[34rem] rounded-[24px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 space-y-2">
+      <p className="font-semibold">生成状态待确认</p>
+      <p className="leading-relaxed">
+        {message ||
+          "当前请求被网关中断，但后台可能已经生成并保存成功。请先到生成记录中确认；如果记录中没有结果，再重新生成。"}
+      </p>
     </div>
   );
 }
@@ -962,16 +989,25 @@ export default function Home() {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
 
     try {
-      const compressPromises = Array.from(files).map((file) => compressImage(file));
-      const compressedImages = await Promise.all(compressPromises);
-      setImages((prev) => [...prev, ...compressedImages]);
+      const compressed = await compressImage(files[0]);
+      const isReplacing = images.length > 0;
+      setImages([compressed]);
+      setAnalysis(null);
+      setError(
+        files.length > MAX_PRODUCT_REFERENCE_IMAGES
+          ? "每类参考图只保留 1 张，已使用本次选择的第一张商品图替换旧图。"
+          : isReplacing
+            ? "商品图已替换为最新上传图片。"
+            : null
+      );
     } catch (err) {
       console.error("Failed to compress images:", err);
-      // Fallback or show error
       setError("图片处理失败，请重试");
+    } finally {
+      e.target.value = "";
     }
   };
 
@@ -981,8 +1017,12 @@ export default function Home() {
     try {
       const compressed = await compressImage(file);
       setSceneImage(compressed);
+      setError(null);
     } catch (err) {
       console.error("Failed to compress scene image:", err);
+      setError("场景图处理失败，请重试");
+    } finally {
+      e.target.value = "";
     }
   };
 
@@ -992,8 +1032,12 @@ export default function Home() {
     try {
       const compressed = await compressImage(file);
       setModelImage(compressed);
+      setError(null);
     } catch (err) {
       console.error("Failed to compress model image:", err);
+      setError("模特图处理失败，请重试");
+    } finally {
+      e.target.value = "";
     }
   };
 
@@ -1068,7 +1112,11 @@ export default function Home() {
       }
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "生成图片过程中发生错误，请重试。");
+      setError(
+        isGenerationResultPendingError(err)
+          ? "生成状态待确认：当前请求在后置上传或入库阶段超时，但后台可能已经生成并保存成功。请先到生成记录中确认；如果记录中没有结果，再重新生成。"
+          : err.message || "生成图片过程中发生错误，请重试。"
+      );
       setStep("EDIT");
     }
   };
@@ -1122,6 +1170,26 @@ export default function Home() {
     setChatMessages((prev) =>
       prev.map((message) =>
         message.id === id ? { ...message, ...patch } : message
+      )
+    );
+  };
+
+  const markReplacedChatReference = (category: ChatImageCategory) => {
+    const labels: Record<ChatImageCategory, string> = {
+      product: "商品参考图",
+      scene: "场景参考图",
+      model: "模特参考图",
+    };
+
+    setChatMessages((prev) =>
+      prev.map((message) =>
+        message.imageCategory === category
+          ? {
+              ...message,
+              content: `此前${labels[category]}已被最新上传替换`,
+              images: undefined,
+            }
+          : message
       )
     );
   };
@@ -1181,15 +1249,24 @@ export default function Home() {
 
     try {
       setChatIsBusy(true);
-      const compressedImages = await Promise.all(
-        Array.from(files).map((file) => compressImage(file))
-      );
-      const nextImages = [...chatImages, ...compressedImages];
+      const compressed = await compressImage(files[0]);
+      const isReplacing = chatImages.length > 0;
+      const nextImages = [compressed];
+      if (isReplacing) {
+        markReplacedChatReference("product");
+      }
       setChatImages(nextImages);
+      setChatAnalysis(null);
       addChatMessage({
         role: "user",
-        content: `已上传 ${compressedImages.length} 张商品参考图`,
-        images: compressedImages,
+        content:
+          files.length > MAX_PRODUCT_REFERENCE_IMAGES
+            ? "已上传商品参考图。每类只保留 1 张，本次使用第一张替换旧图。"
+            : isReplacing
+              ? "已替换商品参考图"
+              : "已上传商品参考图",
+        images: [compressed],
+        imageCategory: "product",
       });
       await runChatAnalysis(nextImages);
     } catch (err: any) {
@@ -1211,11 +1288,15 @@ export default function Home() {
     try {
       setChatIsBusy(true);
       const compressed = await compressImage(file);
+      if (chatSceneImage) {
+        markReplacedChatReference("scene");
+      }
       setChatSceneImage(compressed);
       addChatMessage({
         role: "user",
-        content: "已上传场景参考图",
+        content: chatSceneImage ? "已替换场景参考图" : "已上传场景参考图",
         images: [compressed],
+        imageCategory: "scene",
       });
       addChatMessage({
         role: "assistant",
@@ -1254,11 +1335,15 @@ export default function Home() {
     try {
       setChatIsBusy(true);
       const compressed = await compressImage(file);
+      if (chatModelImage) {
+        markReplacedChatReference("model");
+      }
       setChatModelImage(compressed);
       addChatMessage({
         role: "user",
-        content: "已上传模特参考图",
+        content: chatModelImage ? "已替换模特参考图" : "已上传模特参考图",
         images: [compressed],
+        imageCategory: "model",
       });
       addChatMessage({
         role: "assistant",
@@ -1397,15 +1482,18 @@ export default function Home() {
         ],
       });
     } catch (err: any) {
+      const pendingResult = isGenerationResultPendingError(err);
       updateChatMessage(generationId, {
-        content: "生成失败",
+        content: pendingResult ? "生成状态待确认" : "生成失败",
         generation: {
-          status: "error",
-          error: err.message || "生成图片过程中发生错误，请重试。",
+          status: pendingResult ? "pending" : "error",
+          error: pendingResult
+            ? "当前请求被网关中断，但后台可能已经生成并保存成功。请先到生成记录中确认；如果记录中没有结果，再重新生成。"
+            : err.message || "生成图片过程中发生错误，请重试。",
         },
         actions: [
           { type: "generate", label: "重试生成" },
-          { type: "uploadProduct", label: "补充商品图" },
+          { type: "uploadProduct", label: "更换商品图" },
         ],
       });
     } finally {
@@ -1894,7 +1982,6 @@ export default function Home() {
                     >
                       <input
                         type="file"
-                        multiple
                         accept="image/*"
                         className="hidden"
                         ref={fileInputRef}
@@ -1905,7 +1992,7 @@ export default function Home() {
                       </div>
                       <p className="font-medium mb-1">点击或拖拽上传</p>
                       <p className="text-xs text-[#1a1a1a]/50 text-center">
-                        支持 JPG, PNG，建议上传包含整体与细节的多张图片
+                        支持 JPG, PNG，每次保留最新 1 张商品图
                       </p>
                     </div>
                   </div>
@@ -1917,9 +2004,7 @@ export default function Home() {
                     </h3>
                     <div
                       className="border-2 border-dashed border-[#1a1a1a]/15 rounded-[24px] p-8 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a1a1a]/[0.02] transition-colors min-h-[16rem] relative overflow-hidden"
-                      onClick={() =>
-                        !modelImage && modelInputRef.current?.click()
-                      }
+                      onClick={() => modelInputRef.current?.click()}
                     >
                       <input
                         type="file"
@@ -1947,6 +2032,9 @@ export default function Home() {
                           >
                             <X className="w-4 h-4" />
                           </button>
+                          <div className="absolute inset-x-0 bottom-0 bg-black/45 py-2 text-center text-xs font-medium text-white">
+                            点击更换模特图
+                          </div>
                         </>
                       ) : (
                         <>
@@ -1966,7 +2054,7 @@ export default function Home() {
                 {images.length > 0 && (
                   <div className="mt-8 pt-8 border-t border-[#1a1a1a]/10">
                     <h3 className="text-sm uppercase tracking-widest font-medium text-[#1a1a1a]/60 mb-4">
-                      已上传图片 ({images.length})
+                      当前商品图
                     </h3>
                     <div className="flex gap-4 overflow-x-auto pb-4">
                       {images.map((img, idx) => (
@@ -2387,7 +2475,6 @@ export default function Home() {
             >
               <input
                 type="file"
-                multiple
                 accept="image/*"
                 className="hidden"
                 ref={chatProductInputRef}
@@ -2521,6 +2608,9 @@ export default function Home() {
                                   {message.generation.error}
                                 </div>
                               )}
+                              {message.generation.status === "pending" && (
+                                <ChatGenerationPendingCard message={message.generation.error} />
+                              )}
                               {message.generation.status === "success" && (
                                 <ChatGenerationResultCard
                                   generation={message.generation}
@@ -2645,7 +2735,7 @@ export default function Home() {
                             className="w-full px-4 py-3 text-left text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f2ed] transition-colors flex items-center gap-3"
                           >
                             <Images className="w-4 h-4 text-[#1a1a1a]/65" />
-                            商品图
+                            {chatImages.length > 0 ? "更换商品图" : "商品图"}
                           </button>
                           <button
                             type="button"
@@ -2657,7 +2747,7 @@ export default function Home() {
                             className="w-full px-4 py-3 text-left text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f2ed] transition-colors flex items-center gap-3 border-t border-[#1a1a1a]/5"
                           >
                             <ImageIcon className="w-4 h-4 text-[#1a1a1a]/65" />
-                            场景图
+                            {chatSceneImage ? "更换场景图" : "场景图"}
                           </button>
                           <button
                             type="button"
@@ -2669,7 +2759,7 @@ export default function Home() {
                             className="w-full px-4 py-3 text-left text-sm font-medium text-[#1a1a1a] hover:bg-[#f5f2ed] transition-colors flex items-center gap-3 border-t border-[#1a1a1a]/5"
                           >
                             <UserRound className="w-4 h-4 text-[#1a1a1a]/65" />
-                            模特图
+                            {chatModelImage ? "更换模特图" : "模特图"}
                           </button>
                         </motion.div>
                       )}

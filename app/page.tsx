@@ -149,6 +149,7 @@ interface ChatIntentAction {
 
 const DEFAULT_GEN_MODEL = "gemini-3.1-flash-image-preview";
 const DEFAULT_ASPECT_RATIO = "3:4";
+const GENERATE_REQUEST_TIMEOUT_MS = 300000;
 
 const PRESET_STYLES = [
   "极简原木风 (阳光、白墙、原木床架)",
@@ -611,7 +612,7 @@ const requestGeneratedImage = async ({
   saasInfo,
 }: GenerateRequestOptions) => {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120000);
+  const timeout = setTimeout(() => controller.abort(), GENERATE_REQUEST_TIMEOUT_MS);
 
   try {
     const res = await fetch("/api/generate", {
@@ -634,6 +635,11 @@ const requestGeneratedImage = async ({
     const url = data.image?.url || data.image || data.url;
     if (!url) throw new Error("生成失败，未返回图片数据");
     return url as string;
+  } catch (err: any) {
+    if (err?.name === "AbortError" || /aborted|timeout/i.test(err?.message || "")) {
+      throw new Error(`生成请求超时(${Math.round(GENERATE_REQUEST_TIMEOUT_MS / 1000)}s)：请稍后重试。`);
+    }
+    throw err;
   } finally {
     clearTimeout(timeout);
   }

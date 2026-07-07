@@ -2,7 +2,11 @@ import { GoogleGenAI } from "@google/genai";
 import { NextResponse } from "next/server";
 
 export const runtime = 'nodejs';
-export const maxDuration = 120;
+export const maxDuration = 300;
+
+const AI_GENERATION_TIMEOUT_MS = 120000;
+const SAAS_SHORT_TIMEOUT_MS = 30000;
+const SAAS_UPLOAD_TIMEOUT_MS = 120000;
 
 function getSaasUrl(saasInfo: any, specificUrl: string, defaultPath: string) {
   if (saasInfo[specificUrl]) return saasInfo[specificUrl];
@@ -11,6 +15,32 @@ function getSaasUrl(saasInfo: any, specificUrl: string, defaultPath: string) {
       try { origin = new URL(saasInfo.consumeUrl).origin; } catch(e){}
   }
   return origin.replace(/\/$/, '') + defaultPath;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number,
+  stepName: string
+) {
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(timeoutMs) : undefined,
+    });
+  } catch (err: any) {
+    const message = err?.message || String(err);
+    const isTimeout =
+      err?.name === "TimeoutError" ||
+      err?.name === "AbortError" ||
+      /timeout|aborted/i.test(message);
+
+    if (isTimeout) {
+      throw new Error(`${stepName}超时(${Math.round(timeoutMs / 1000)}s)，请稍后重试`);
+    }
+
+    throw err;
+  }
 }
 
 export async function POST(req: Request) {
@@ -45,12 +75,11 @@ export async function POST(req: Request) {
     if (shouldSaveToSaas) {
       try {
         const verifyUrl = getSaasUrl(saasInfo, 'verifyUrl', '/api/tool/verify');
-        const verifyRes = await fetch(verifyUrl, {
+        const verifyRes = await fetchWithTimeout(verifyUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId, toolId }),
-          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
-        });
+        }, SAAS_SHORT_TIMEOUT_MS, "积分校验");
         const verifyDataText = await verifyRes.text();
         let verifyData: any = {};
         try { verifyData = JSON.parse(verifyDataText); } catch(e) { verifyData = { error: verifyDataText.slice(0, 300) }; }
@@ -95,7 +124,7 @@ export async function POST(req: Request) {
 
     let response;
     try {
-        const timeoutMsg = "AI 生成超时(120s): 模型处理耗时过长，请尝试降低参数或再次重试。";
+        const timeoutMsg = `AI 生成超时(${Math.round(AI_GENERATION_TIMEOUT_MS / 1000)}s): 模型处理耗时过长，请尝试降低参数或再次重试。`;
         const targetModel = genModel || "gemini-3.1-flash-image-preview";
         response = await Promise.race([
           ai.models.generateContent({
@@ -104,7 +133,7 @@ export async function POST(req: Request) {
             config: { imageConfig: { aspectRatio } }
           }),
           new Promise<never>((_, reject) => {
-             setTimeout(() => reject(new Error(timeoutMsg)), 120000);
+             setTimeout(() => reject(new Error(timeoutMsg)), AI_GENERATION_TIMEOUT_MS);
           })
         ]);
     } catch(err: any) {
@@ -137,12 +166,11 @@ export async function POST(req: Request) {
       try {
         // 2. Consume
         const consumeUrl = getSaasUrl(saasInfo, 'consumeUrl', '/api/tool/consume');
-        const consumeRes = await fetch(consumeUrl, {
+        const consumeRes = await fetchWithTimeout(consumeUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId, toolId }),
-          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
-        });
+        }, SAAS_SHORT_TIMEOUT_MS, "扣费");
         const consumeText = await consumeRes.text();
         let consume: any = {};
         try { consume = JSON.parse(consumeText); } catch(e) { consume = { error: consumeText.slice(0, 300) }; }
@@ -153,7 +181,7 @@ export async function POST(req: Request) {
         currentSaasStep = "upload-token";
         // 3. Direct Token
         const uploadTokenUrl = getSaasUrl(saasInfo, 'uploadTokenUrl', '/api/upload/direct-token');
-        const tokenRes = await fetch(uploadTokenUrl, {
+        const tokenRes = await fetchWithTimeout(uploadTokenUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -164,8 +192,7 @@ export async function POST(req: Request) {
             fileName: 'result.png',
             fileSize: finalImageBuffer.byteLength
           }),
-          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
-        });
+        }, SAAS_SHORT_TIMEOUT_MS, "获取上传凭证");
         const tokenText = await tokenRes.text();
         let token: any = {};
         try { token = JSON.parse(tokenText); } catch(e) { token = { error: tokenText.slice(0, 300) }; }
@@ -175,18 +202,17 @@ export async function POST(req: Request) {
 
         currentSaasStep = "oss-upload";
         // 4. Upload to OSS
-        const uploadRes = await fetch(token.uploadUrl, {
+        const uploadRes = await fetchWithTimeout(token.uploadUrl, {
           method: token.method || 'PUT',
           headers: token.headers,
-          body: finalImageBuffer,
-          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(30000) : undefined
-        });
+          body: finalImageBuffer as any,
+        }, SAAS_UPLOAD_TIMEOUT_MS, "OSS 上传");
         if (!uploadRes.ok) throw new Error(`OSS 上传失败 (${uploadRes.status})`);
 
         currentSaasStep = "upload-commit";
         // 5. Commit
         const uploadCommitUrl = getSaasUrl(saasInfo, 'uploadCommitUrl', '/api/upload/commit');
-        const commitRes = await fetch(uploadCommitUrl, {
+        const commitRes = await fetchWithTimeout(uploadCommitUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -196,8 +222,7 @@ export async function POST(req: Request) {
             objectKey: token.objectKey,
             fileSize: finalImageBuffer.byteLength
           }),
-          signal: typeof AbortSignal !== "undefined" ? AbortSignal.timeout(10000) : undefined
-        });
+        }, SAAS_SHORT_TIMEOUT_MS, "图片入库");
         const commitText = await commitRes.text();
         let commit: any = {};
         try { commit = JSON.parse(commitText); } catch(e) { commit = { error: commitText.slice(0, 300) }; }

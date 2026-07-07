@@ -76,6 +76,7 @@ interface ChatAction {
   label: string;
   value?: string;
   description?: string;
+  prompt?: string;
 }
 
 interface ChatGeneration {
@@ -170,8 +171,20 @@ const IMAGE_TYPE_OPTIONS = [
 
 const CHAT_WELCOME_ACTIONS: ChatAction[] = [
   { type: "uploadProduct", label: "上传商品图", description: "先识别花型、颜色和材质" },
-  { type: "imageType", label: "商品主图", value: "main", description: "整体场景和电商首图" },
-  { type: "imageType", label: "细节近景", value: "closeup", description: "面料纹理、刺绣和做工" },
+  {
+    type: "imageType",
+    label: "定制商品主图",
+    value: "main",
+    description: "整体场景和电商首图",
+    prompt: "定制家纺商品主图，先帮我确认画幅、风格、商品参考图和生成参数",
+  },
+  {
+    type: "imageType",
+    label: "定制细节近景",
+    value: "closeup",
+    description: "面料纹理、刺绣和做工",
+    prompt: "定制家纺细节近景图，先帮我确认面料纹理、花型、构图和生成参数",
+  },
   { type: "uploadScene", label: "场景参考", description: "可选，锁定卧室结构和光影" },
 ];
 
@@ -264,7 +277,10 @@ const getSettingsFromChatIntent = (
 const serializeChatMessagesForApi = (messages: ChatMessage[]) => {
   return messages.map((message, index) => ({
     role: message.role,
-    content: message.content || "",
+    content:
+      message.role === "assistant"
+        ? `[REPLY]\n${message.content || ""}`
+        : message.content || "",
     images: index === messages.length - 1 ? message.images || [] : [],
   }));
 };
@@ -280,35 +296,108 @@ const createFallbackAnalysis = (instruction: string, style?: string | null): Ana
 
 const getTypeSelectedActions = (): ChatAction[] => [
   { type: "uploadProduct", label: "上传商品图", description: "用于还原花型、颜色、材质和细节" },
-  { type: "style", label: "温馨奶油风", value: PRESET_STYLES[3] },
-  { type: "generate", label: "按文字直接生成" },
+  {
+    type: "style",
+    label: "温馨奶油风",
+    value: PRESET_STYLES[3],
+    prompt: "把家纺画面风格切换为温馨奶油风，并继续帮我确认下一步生成参数",
+  },
+  {
+    type: "generate",
+    label: "按文字直接生成",
+    prompt: "按当前文字需求直接生成一张家纺图片",
+  },
 ];
 
 const getOptionalReferenceActions = (): ChatAction[] => [
   { type: "uploadScene", label: "上传自定义场景", description: "可选，复刻房间结构、家具和光影" },
   { type: "uploadModel", label: "上传模特图", description: "可选，生成真人互动场景" },
-  { type: "style", label: "极简原木风", value: PRESET_STYLES[0] },
-  { type: "style", label: "现代轻奢风", value: PRESET_STYLES[2] },
-  { type: "generate", label: "不用补充，直接生成" },
+  {
+    type: "style",
+    label: "极简原木风",
+    value: PRESET_STYLES[0],
+    prompt: "把家纺画面风格切换为极简原木风，并继续帮我确认下一步生成参数",
+  },
+  {
+    type: "style",
+    label: "现代轻奢风",
+    value: PRESET_STYLES[2],
+    prompt: "把家纺画面风格切换为现代轻奢风，并继续帮我确认下一步生成参数",
+  },
+  {
+    type: "generate",
+    label: "不用补充，直接生成",
+    prompt: "不用再补充参考图，按当前参数直接生成家纺图片",
+  },
 ];
 
 const getReadyToGenerateActions = (): ChatAction[] => [
-  { type: "aspect", label: "3:4 竖版", value: "3:4" },
-  { type: "aspect", label: "1:1 方图", value: "1:1" },
-  { type: "count", label: "生成 1 张", value: "1" },
-  { type: "count", label: "生成 2 张", value: "2" },
-  { type: "generate", label: "生成图片" },
+  {
+    type: "aspect",
+    label: "3:4 竖版",
+    value: "3:4",
+    prompt: "把输出画幅切换为 3:4 竖版，并继续准备生成",
+  },
+  {
+    type: "aspect",
+    label: "1:1 方图",
+    value: "1:1",
+    prompt: "把输出画幅切换为 1:1 方图，并继续准备生成",
+  },
+  {
+    type: "count",
+    label: "生成 1 张",
+    value: "1",
+    prompt: "把生成数量设置为 1 张，并继续准备生成",
+  },
+  {
+    type: "count",
+    label: "生成 2 张",
+    value: "2",
+    prompt: "把生成数量设置为 2 张，并继续准备生成",
+  },
+  {
+    type: "generate",
+    label: "生成图片",
+    prompt: "按当前参数直接生成家纺图片",
+  },
 ];
 
 const getChatGenerationActions = (): ChatAction[] => {
   return [
-    { type: "imageType", label: "商品主图", value: "main", description: "整体视觉效果" },
-    { type: "imageType", label: "细节近景", value: "closeup", description: "面料与做工特写" },
+    {
+      type: "imageType",
+      label: "定制商品主图",
+      value: "main",
+      description: "整体视觉效果",
+      prompt: "定制家纺商品主图，先帮我确认画幅、风格、参考图和生成参数",
+    },
+    {
+      type: "imageType",
+      label: "定制细节近景",
+      value: "closeup",
+      description: "面料与做工特写",
+      prompt: "定制家纺细节近景图，先帮我确认面料纹理、花型、构图和生成参数",
+    },
     { type: "uploadScene", label: "上传自定义场景", description: "可选，覆盖默认风格" },
     { type: "uploadModel", label: "上传模特图", description: "可选，生成真人互动效果" },
-    { type: "style", label: "温馨奶油风", value: PRESET_STYLES[3] },
-    { type: "aspect", label: "1:1 方图", value: "1:1" },
-    { type: "generate", label: "生成图片" },
+    {
+      type: "style",
+      label: "温馨奶油风",
+      value: PRESET_STYLES[3],
+      prompt: "把家纺画面风格切换为温馨奶油风，并继续帮我确认下一步生成参数",
+    },
+    {
+      type: "aspect",
+      label: "1:1 方图",
+      value: "1:1",
+      prompt: "把输出画幅切换为 1:1 方图，并继续准备生成",
+    },
+    {
+      type: "generate",
+      label: "生成图片",
+      prompt: "按当前参数直接生成家纺图片",
+    },
   ];
 };
 
@@ -341,11 +430,45 @@ const inferChatSettingsFromText = (
 };
 
 const getParameterActionsForText = (text: string): ChatAction[] => {
+  if (/定制|参数|设置|选项|确认/.test(text)) {
+    return [
+      { type: "uploadProduct", label: "上传商品图", description: "还原花型、颜色和材质" },
+      { type: "uploadScene", label: "上传场景图", description: "锁定卧室结构和光影" },
+      {
+        type: "style",
+        label: "温馨奶油风",
+        value: PRESET_STYLES[3],
+        description: "柔和低饱和家居氛围",
+        prompt: "把家纺画面风格切换为温馨奶油风，并继续帮我确认下一步生成参数",
+      },
+      {
+        type: "aspect",
+        label: "1:1 方图",
+        value: "1:1",
+        description: "适合电商方形主图",
+        prompt: "把输出画幅切换为 1:1 方图，并继续准备生成",
+      },
+      {
+        type: "count",
+        label: "生成 2 张",
+        value: "2",
+        description: "一次输出两版选择",
+        prompt: "把生成数量设置为 2 张，并继续准备生成",
+      },
+      {
+        type: "generate",
+        label: "按当前参数生成",
+        description: "确认配置并开始出图",
+        prompt: "按当前参数直接生成家纺图片",
+      },
+    ];
+  }
   if (/风格/.test(text)) {
     return PRESET_STYLES.map((preset) => ({
       type: "style",
       label: preset.split(" ")[0],
       value: preset,
+      prompt: `把家纺画面风格切换为${preset}，并继续帮我确认下一步生成参数`,
     }));
   }
   if (/比例|尺寸|大小|画幅/.test(text)) {
@@ -353,6 +476,7 @@ const getParameterActionsForText = (text: string): ChatAction[] => {
       type: "aspect",
       label: `${option.label} ${option.description}`,
       value: option.value,
+      prompt: `把输出画幅切换为 ${option.value}，并继续准备生成`,
     }));
   }
   if (/类型|主图|细节|近景|特写/.test(text)) {
@@ -361,6 +485,10 @@ const getParameterActionsForText = (text: string): ChatAction[] => {
       label: option.label,
       value: option.value,
       description: option.description,
+      prompt:
+        option.value === "main"
+          ? "定制家纺商品主图，先帮我确认画幅、风格、参考图和生成参数"
+          : "定制家纺细节近景图，先帮我确认面料纹理、花型、构图和生成参数",
     }));
   }
   if (/数量|几张/.test(text)) {
@@ -368,17 +496,8 @@ const getParameterActionsForText = (text: string): ChatAction[] => {
       type: "count",
       label: `${count} 张`,
       value: String(count),
+      prompt: `把生成数量设置为 ${count} 张，并继续准备生成`,
     }));
-  }
-  if (/参数|设置|选项/.test(text)) {
-    return [
-      { type: "uploadProduct", label: "上传商品图" },
-      { type: "style", label: "温馨奶油风", value: PRESET_STYLES[3] },
-      { type: "aspect", label: "1:1 方图", value: "1:1" },
-      { type: "imageType", label: "细节近景", value: "closeup" },
-      { type: "count", label: "2 张", value: "2" },
-      { type: "generate", label: "生成图片" },
-    ];
   }
   return [];
 };
@@ -459,6 +578,14 @@ const readJsonResponse = async (res: Response, fallbackPrefix: string) => {
   }
   await res.text();
   throw new Error(`${fallbackPrefix} (${res.status}): 请重试`);
+};
+
+const getFriendlyChatErrorMessage = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  if (/GEMINI_API_KEY|API_KEY|api key/i.test(message)) {
+    return "AI 对话服务未配置 Gemini API Key，请配置后重试。";
+  }
+  return message || "AI 对话解析失败，请稍后重试。";
 };
 
 const analyzeImages = async (images: string[]) => {
@@ -1074,6 +1201,11 @@ export default function Home() {
       return;
     }
 
+    if (action.prompt) {
+      await handleChatSubmit(undefined, action.prompt);
+      return;
+    }
+
     if (action.type === "uploadProduct") {
       chatProductInputRef.current?.click();
       return;
@@ -1217,9 +1349,12 @@ export default function Home() {
     return null;
   };
 
-  const handleChatSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const text = chatInput.trim();
+  const handleChatSubmit = async (
+    e?: React.FormEvent<HTMLFormElement>,
+    overrideText?: string
+  ) => {
+    e?.preventDefault();
+    const text = (overrideText ?? chatInput).trim();
     if (!text || chatIsBusy) return;
 
     const currentSettings: ChatGenerationSettings = {
@@ -1344,7 +1479,7 @@ export default function Home() {
       }
     } catch (err: any) {
       updateChatMessage(assistantId, {
-        content: err.message || "AI 对话解析失败，请稍后重试。",
+        content: getFriendlyChatErrorMessage(err),
         actions: getChatGenerationActions(),
       });
     } finally {
@@ -1353,6 +1488,11 @@ export default function Home() {
       }
     }
   };
+
+  const latestAssistantMessageId = chatMessages.reduce<string | null>(
+    (latestId, message) => (message.role === "assistant" ? message.id : latestId),
+    null
+  );
 
   return (
     <main className="flex-1 flex flex-col">
@@ -2063,6 +2203,8 @@ export default function Home() {
                   {chatMessages.map((message, index) => {
                     const isUser = message.role === "user";
                     const isWelcomeActions = !isUser && index === 0;
+                    const isLatestAssistantActions =
+                      !isUser && !isWelcomeActions && message.id === latestAssistantMessageId;
 
                     return (
                       <div
@@ -2244,7 +2386,9 @@ export default function Home() {
                               className={
                                 isWelcomeActions
                                   ? "mt-3 w-full rounded-2xl border border-[#1a1a1a]/8 bg-white/75 p-3 shadow-[0_8px_22px_rgb(0,0,0,0.035)]"
-                                  : "mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full"
+                                  : isLatestAssistantActions
+                                    ? "mt-3 w-full rounded-2xl border border-[#1a1a1a]/8 bg-white/75 p-3 shadow-[0_8px_22px_rgb(0,0,0,0.035)]"
+                                    : "mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 w-full"
                               }
                             >
                               {isWelcomeActions && (
@@ -2260,34 +2404,51 @@ export default function Home() {
                                   </span>
                                 </div>
                               )}
-                              <div className={isWelcomeActions ? "grid grid-cols-2 gap-2" : "contents"}>
+                              {isLatestAssistantActions && (
+                                <div className="mb-2.5 flex items-center justify-between gap-3">
+                                  <div className="flex items-center gap-2">
+                                    <Settings className="w-3.5 h-3.5 text-[#1a1a1a]/55" />
+                                    <span className="text-[11px] font-semibold text-[#1a1a1a]/60">
+                                      智能参数调节与下一步操作
+                                    </span>
+                                  </div>
+                                  <span className="text-[10px] text-[#1a1a1a]/38">
+                                    当前 {chatAspectRatio} · {chatImageType === "closeup" ? "细节近景" : "商品主图"}
+                                  </span>
+                                </div>
+                              )}
+                              <div className={isWelcomeActions || isLatestAssistantActions ? "grid grid-cols-2 gap-2" : "contents"}>
                               {message.actions.map((action, idx) => (
                                 <button
                                   key={`${message.id}-${action.type}-${action.value || idx}`}
                                   onClick={() => handleChatAction(action)}
                                   disabled={chatIsBusy}
                                   className={
-                                    isWelcomeActions
+                                    isWelcomeActions || isLatestAssistantActions
                                       ? "min-h-[4.25rem] text-left rounded-xl border border-[#1a1a1a]/8 bg-white px-3 py-2.5 hover:border-[#1a1a1a]/25 hover:bg-[#f5f2ed]/70 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       : "text-left rounded-2xl border border-[#1a1a1a]/10 bg-white px-4 py-3 hover:border-[#1a1a1a]/30 hover:bg-[#f5f2ed]/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                   }
                                 >
-                                  <span className={isWelcomeActions ? "flex items-start gap-2" : "block"}>
-                                    {isWelcomeActions && (
+                                  <span className={isWelcomeActions || isLatestAssistantActions ? "flex items-start gap-2" : "block"}>
+                                    {(isWelcomeActions || isLatestAssistantActions) && (
                                       <span className="mt-0.5 w-7 h-7 rounded-full bg-[#f5f2ed] border border-[#1a1a1a]/6 flex items-center justify-center shrink-0">
                                         {action.type === "uploadProduct" && <Images className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
                                         {action.type === "uploadScene" && <ImageIcon className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
                                         {action.type === "uploadModel" && <UserRound className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
                                         {action.type === "imageType" && action.value === "main" && <Sparkles className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
                                         {action.type === "imageType" && action.value === "closeup" && <ImageIcon className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "style" && <Wand2 className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "aspect" && <Settings className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "count" && <Images className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
+                                        {action.type === "generate" && <Sparkles className="w-3.5 h-3.5 text-[#1a1a1a]/62" />}
                                       </span>
                                     )}
                                     <span className="min-w-0">
-                                      <span className={isWelcomeActions ? "text-[13px] font-semibold block text-[#1a1a1a]" : "text-sm font-medium block"}>
+                                      <span className={isWelcomeActions || isLatestAssistantActions ? "text-[13px] font-semibold block text-[#1a1a1a]" : "text-sm font-medium block"}>
                                         {action.label}
                                       </span>
                                       {action.description && (
-                                        <span className={isWelcomeActions ? "text-[11px] leading-snug text-[#1a1a1a]/45 mt-0.5 block" : "text-xs text-[#1a1a1a]/50 mt-1 block"}>
+                                        <span className={isWelcomeActions || isLatestAssistantActions ? "text-[11px] leading-snug text-[#1a1a1a]/45 mt-0.5 block" : "text-xs text-[#1a1a1a]/50 mt-1 block"}>
                                           {action.description}
                                         </span>
                                       )}
